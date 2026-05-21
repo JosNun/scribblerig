@@ -1,24 +1,27 @@
-import { def, type Props } from "../registry/registry";
-import type { Body } from "../scene/scene";
+import type { PropField, Props } from "../registry/registry";
 
 /**
- * Generic property editor: renders one control per field in the selected body
- * type's `propSchema`. Adding a property to a schema surfaces it here with no
- * change to this component.
+ * Generic property editor: one control per schema field. Used for both body
+ * and connector properties — the caller supplies the title, schema, and props.
+ * Adding a field to a schema surfaces it here with no change to this component.
  */
 export function PropertyPanel({
-  body,
+  title,
+  schema,
+  props,
   onChange,
 }: {
-  body: Body;
+  title: string;
+  schema: PropField[];
+  props: Props;
   onChange: (patch: Props) => void;
 }) {
-  const d = def(body.type);
   return (
     <div className="panel properties">
-      <div className="prop-title">{d.label}</div>
-      {d.propSchema.map((f) => {
-        const value = body.props[f.key];
+      <div className="prop-title">{title}</div>
+      {schema.length === 0 && <div className="prop-empty">No adjustable properties.</div>}
+      {schema.map((f) => {
+        const value = props[f.key];
         if (f.kind === "boolean") {
           return (
             <label key={f.key} className="prop-row toggle">

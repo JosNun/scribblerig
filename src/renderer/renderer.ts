@@ -10,11 +10,20 @@
 
 import rough from "roughjs";
 import type { Drawable } from "roughjs/bin/core";
-import type { Body, Scene } from "../scene/scene";
+import type { Body, Connector, ConnectorType, Endpoint, Scene, Vec2 } from "../scene/scene";
+import { isBodyEndpoint } from "../scene/scene";
 import type { BodyTransform } from "../sim/sim";
-import { def, type Props, type Shape } from "../registry/registry";
+import { def, connectorDef, type Props, type Shape } from "../registry/registry";
 import { bodyHandles, bodyToWorld } from "../editor/editor";
 import { type Camera, worldToScreen } from "./camera";
+
+/** Transient draw-time overlay for the connector-draw interaction. */
+export interface DrawOverlay {
+  /** Rubber-band preview line (world coords) while drawing a connector. */
+  preview?: { a: Vec2; b: Vec2; type: ConnectorType };
+  /** World point the endpoint will snap to, highlighted as you drag. */
+  snap?: Vec2;
+}
 
 const WALL_THICKNESS = 0.5; // meters; mirrors the floor collider in sim
 
@@ -26,6 +35,7 @@ export interface Renderer {
     scene: Scene,
     transforms: Map<string, BodyTransform>,
     selectedId?: string | null,
+    overlay?: DrawOverlay,
   ): void;
   /** Swap the camera (e.g. on window resize). Invalidates the drawable cache. */
   setCamera(camera: Camera): void;
@@ -59,11 +69,14 @@ export function createRenderer(
       cam = next;
       cache.clear();
     },
-    draw(scene, transforms, selectedId) {
+    draw(scene, transforms, selectedId, overlay) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const room = scene.rooms[0];
 
       drawWalls(room.settings.walls, room.settings.size);
+
+      // Connectors under the bodies they join.
+      for (const conn of room.connectors) drawConnector(conn, transforms, conn.id === selectedId);
 
       for (const body of room.bodies) {
         const t = transforms.get(body.id);
@@ -74,8 +87,122 @@ export function createRenderer(
           drawHandles(body, t);
         }
       }
+
+      if (overlay) drawDrawOverlay(overlay);
     },
   };
+
+  /** World position of a connector endpoint using the live transforms. */
+  function endpointWorld(ep: Endpoint, transforms: Map<string, BodyTransform>): Vec2 | null {
+    if (!isBodyEndpoint(ep)) return ep.world;
+    const t = transforms.get(ep.body);
+    if (!t) return null;
+    const c = Math.cos(t.rotation);
+    const s = Math.sin(t.rotation);
+    return {
+      x: t.position.x + ep.local.x * c - ep.local.y * s,
+      y: t.position.y + ep.local.x * s + ep.local.y * c,
+    };
+  }
+
+  function drawConnector(conn: Connector, transforms: Map<string, BodyTransform>, selected: boolean): void {
+    const aw = endpointWorld(conn.a, transforms);
+    const bw = endpointWorld(conn.b, transforms);
+    if (!aw || !bw) return;
+    const pa = worldToScreen(cam, aw);
+    const pb = worldToScreen(cam, bw);
+    const color = selected ? SELECT_COLOR : connectorDef(conn.type).stroke;
+    const width = selected ? 4 : 2.5;
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = width;
+    if (conn.type === "spring") {
+      strokeSpring(pa, pb);
+    } else if (conn.type === "weld") {
+      line(pa, pb);
+      square(pa, 4);
+      square(pb, 4);
+    } else {
+      ctx.globalAlpha = 0.5;
+      line(pa, pb);
+      ctx.globalAlpha = 1;
+      const pivotWorld = !isBodyEndpoint(conn.a) ? aw : !isBodyEndpoint(conn.b) ? bw : aw;
+      ring(worldToScreen(cam, pivotWorld), 6);
+    }
+    ctx.restore();
+  }
+
+  function drawDrawOverlay(overlay: DrawOverlay): void {
+    ctx.save();
+    if (overlay.preview) {
+      const pa = worldToScreen(cam, overlay.preview.a);
+      const pb = worldToScreen(cam, overlay.preview.b);
+      ctx.strokeStyle = connectorDef(overlay.preview.type).stroke;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 4]);
+      line(pa, pb);
+      ctx.setLineDash([]);
+    }
+    if (overlay.snap) {
+      ctx.strokeStyle = SELECT_COLOR;
+      ctx.fillStyle = "rgba(31,122,61,0.25)";
+      ctx.lineWidth = 2;
+      const p = worldToScreen(cam, overlay.snap);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function line(a: Vec2, b: Vec2): void {
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  function square(p: Vec2, r: number): void {
+    ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+  }
+  function ring(p: Vec2, r: number): void {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+    ctx.stroke();
+  }
+  /** A zigzag coil between two screen points (deterministic — no shimmer). */
+  function strokeSpring(a: Vec2, b: Vec2): void {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    const nx = -uy;
+    const ny = ux;
+    const coils = 6;
+    const amp = 7;
+    const lead = Math.min(12, len * 0.2);
+    const startX = a.x + ux * lead;
+    const startY = a.y + uy * lead;
+    const endX = b.x - ux * lead;
+    const endY = b.y - uy * lead;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(startX, startY);
+    const steps = coils * 2;
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const side = i % 2 === 0 ? 0 : i % 4 === 1 ? 1 : -1;
+      ctx.lineTo(startX + (endX - startX) * t + nx * amp * side, startY + (endY - startY) * t + ny * amp * side);
+    }
+    ctx.lineTo(endX, endY);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
 
   /** Crisp resize/rotate handles for the selected body (a UI overlay). */
   function drawHandles(body: Body, t: BodyTransform): void {

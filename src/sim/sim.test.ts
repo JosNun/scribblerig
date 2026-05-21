@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { initSim, compile } from "./sim";
-import { createScene, addBody, updateRoomSettings, tracerScene } from "../scene/scene";
+import {
+  createScene,
+  addBody,
+  addConnector,
+  updateRoomSettings,
+  tracerScene,
+} from "../scene/scene";
 import { makeBody } from "../registry/registry";
 
 beforeAll(async () => {
@@ -155,6 +161,89 @@ describe("room settings feed the simulation", () => {
       maxX = Math.max(maxX, world.readTransforms().get(id)!.position.x);
     }
     expect(maxX).toBeLessThan(8);
+    world.free();
+  });
+});
+
+describe("connectors compile to joints", () => {
+  const distTo = (t: { position: { x: number; y: number } }, x: number, y: number) =>
+    Math.hypot(t.position.x - x, t.position.y - y);
+
+  it("a pin holds a body at a fixed distance and lets it swing (pendulum)", () => {
+    let scene = createScene();
+    const ball = addBody(scene, 0, makeBody("ball", { x: 2, y: 6 }));
+    scene = ball.scene;
+    // Pin the ball to a fixed world point 2m to its left.
+    scene = addConnector(scene, 0, {
+      type: "pin",
+      a: { world: { x: 0, y: 6 } },
+      b: { body: ball.id, local: { x: 0, y: 0 } },
+      props: {},
+    }).scene;
+
+    const world = compile(scene);
+    let minY = Infinity;
+    let maxArmErr = 0;
+    for (let i = 0; i < 120; i++) {
+      world.step();
+      const t = world.readTransforms().get(ball.id)!;
+      minY = Math.min(minY, t.position.y);
+      maxArmErr = Math.max(maxArmErr, Math.abs(distTo(t, 0, 6) - 2));
+    }
+    // The rigid arm (pivot→bob center) stays ~2m throughout…
+    expect(maxArmErr).toBeLessThan(0.1);
+    // …and the bob swings down through the bottom of its arc (≈ y 4).
+    expect(minY).toBeLessThan(4.5);
+    world.free();
+  });
+
+  it("a weld keeps two bodies in their relative pose as they fall together", () => {
+    let scene = createScene();
+    const a = addBody(scene, 0, { ...makeBody("platform", { x: 0, y: 6 }), props: { width: 3, height: 0.4, friction: 0.6, static: false } });
+    scene = a.scene;
+    const b = addBody(scene, 0, { ...makeBody("platform", { x: 2, y: 6 }), props: { width: 3, height: 0.4, friction: 0.6, static: false } });
+    scene = b.scene;
+    scene = addConnector(scene, 0, {
+      type: "weld",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { body: b.id, local: { x: 0, y: 0 } },
+      props: {},
+    }).scene;
+
+    const world = compile(scene);
+    for (let i = 0; i < 30; i++) world.step();
+    const ta = world.readTransforms().get(a.id)!;
+    const tb = world.readTransforms().get(b.id)!;
+
+    // Both fell, and their relative offset is preserved (still ~ (2, 0)).
+    expect(ta.position.y).toBeLessThan(6);
+    expect(tb.position.x - ta.position.x).toBeCloseTo(2, 1);
+    expect(tb.position.y - ta.position.y).toBeCloseTo(0, 1);
+    world.free();
+  });
+
+  it("a spring pulls two bodies toward its rest length", () => {
+    let scene = createScene();
+    scene = updateRoomSettings(scene, 0, { gravity: { x: 0, y: 0 } }); // isolate the spring
+    const a = addBody(scene, 0, makeBody("ball", { x: -2, y: 6 }));
+    scene = a.scene;
+    const b = addBody(scene, 0, makeBody("ball", { x: 2, y: 6 }));
+    scene = b.scene;
+    scene = addConnector(scene, 0, {
+      type: "spring",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { body: b.id, local: { x: 0, y: 0 } },
+      props: { stiffness: 200, restLength: 1, damping: 1 },
+    }).scene;
+
+    const world = compile(scene);
+    const startGap = 4;
+    for (let i = 0; i < 60; i++) world.step();
+    const ta = world.readTransforms().get(a.id)!;
+    const tb = world.readTransforms().get(b.id)!;
+
+    // Rest length 1 < initial gap 4, so the spring contracts them closer.
+    expect(distTo(ta, tb.position.x, tb.position.y)).toBeLessThan(startGap);
     world.free();
   });
 });

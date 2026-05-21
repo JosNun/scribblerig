@@ -9,7 +9,7 @@
  * into drawables. The descriptor is the shared contract between the modules.
  */
 
-import type { Body, BodyType, Vec2 } from "../scene/scene";
+import type { Body, BodyType, Connector, ConnectorType, Endpoint, Vec2 } from "../scene/scene";
 
 export type Props = Record<string, number | boolean>;
 
@@ -156,4 +156,67 @@ export function makeBody(type: BodyType, position: Vec2): Omit<Body, "id"> {
     rotation: 0,
     props: { ...BY_TYPE[type].defaults },
   };
+}
+
+// ----- connector types -----
+
+export interface ConnectorTypeDef {
+  type: ConnectorType;
+  label: string;
+  defaults: Props;
+  propSchema: PropField[];
+  /** Doodle stroke colour for rendering the connector. */
+  stroke: string;
+}
+
+const SPRING: ConnectorTypeDef = {
+  type: "spring",
+  label: "Spring",
+  defaults: { stiffness: 80, restLength: 2, damping: 3 },
+  propSchema: [
+    { key: "stiffness", label: "Stiffness", kind: "number", min: 1, max: 500, step: 1 },
+    { key: "restLength", label: "Rest length", kind: "number", min: 0.1, max: 12, step: 0.1 },
+    { key: "damping", label: "Damping", kind: "number", min: 0, max: 50, step: 0.5 },
+  ],
+  stroke: "#7a5b9b",
+};
+
+const WELD: ConnectorTypeDef = {
+  type: "weld",
+  label: "Weld",
+  defaults: {},
+  propSchema: [],
+  stroke: "#b5651d",
+};
+
+const PIN: ConnectorTypeDef = {
+  type: "pin",
+  label: "Pin",
+  defaults: {},
+  propSchema: [],
+  stroke: "#2b2b2b",
+};
+
+const CONNECTOR_ORDER: ConnectorTypeDef[] = [SPRING, WELD, PIN];
+const CONNECTOR_BY_TYPE: Record<ConnectorType, ConnectorTypeDef> = {
+  spring: SPRING,
+  weld: WELD,
+  pin: PIN,
+};
+
+export function connectorTypes(): ConnectorTypeDef[] {
+  return CONNECTOR_ORDER;
+}
+
+export function connectorDef(type: ConnectorType): ConnectorTypeDef {
+  return CONNECTOR_BY_TYPE[type];
+}
+
+/** Build a new (id-less) connector between two endpoints, with default props. */
+export function makeConnector(
+  type: ConnectorType,
+  a: Endpoint,
+  b: Endpoint,
+): Omit<Connector, "id"> {
+  return { type, a, b, props: { ...CONNECTOR_BY_TYPE[type].defaults } };
 }

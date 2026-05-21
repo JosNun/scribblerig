@@ -22,10 +22,31 @@ export interface Body {
   props: Record<string, number | boolean>;
 }
 
-/** Constraint between two endpoints. No collision geometry of its own. */
+export type ConnectorType = "spring" | "weld" | "pin";
+
+/**
+ * One end of a connector: either a point on a body (in that body's local
+ * coordinates) or a fixed point in world space. The world-point form lets a
+ * connector ground to nothing (e.g. a pendulum hung from a fixed point).
+ */
+export type Endpoint = { body: string; local: Vec2 } | { world: Vec2 };
+
+/**
+ * A constraint between two endpoints. No collision geometry of its own — only
+ * the bodies it joins collide. Compiles to a Rapier joint in `sim`.
+ */
 export interface Connector {
   id: string;
-  type: string;
+  type: ConnectorType;
+  a: Endpoint;
+  b: Endpoint;
+  /** Schema-driven properties (spring: stiffness, restLength, damping). */
+  props: Record<string, number | boolean>;
+}
+
+/** Narrowing helper: is this endpoint anchored to a body? */
+export function isBodyEndpoint(e: Endpoint): e is { body: string; local: Vec2 } {
+  return "body" in e;
 }
 
 export interface RoomSettings {
@@ -146,5 +167,56 @@ export function updateBody(
   return replaceRoom(scene, roomIndex, {
     ...room,
     bodies: room.bodies.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+  });
+}
+
+/** Append a connector to a room, minting a deterministic unique id. */
+export function addConnector(
+  scene: Scene,
+  roomIndex: number,
+  connector: Omit<Connector, "id">,
+): { scene: Scene; id: string } {
+  const id = `c${scene.nextId}`;
+  const room = scene.rooms[roomIndex];
+  const next = replaceRoom(
+    { ...scene, nextId: scene.nextId + 1 },
+    roomIndex,
+    { ...room, connectors: [...room.connectors, { ...connector, id }] },
+  );
+  return { scene: next, id };
+}
+
+/** Remove a connector by id, preserving the order of the rest. */
+export function removeConnector(scene: Scene, roomIndex: number, id: string): Scene {
+  const room = scene.rooms[roomIndex];
+  return replaceRoom(scene, roomIndex, {
+    ...room,
+    connectors: room.connectors.filter((c) => c.id !== id),
+  });
+}
+
+/** Shallow-merge a patch into the connector with the given id. */
+export function updateConnector(
+  scene: Scene,
+  roomIndex: number,
+  id: string,
+  patch: Partial<Omit<Connector, "id">>,
+): Scene {
+  const room = scene.rooms[roomIndex];
+  return replaceRoom(scene, roomIndex, {
+    ...room,
+    connectors: room.connectors.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+  });
+}
+
+/** Remove a body and any connectors that referenced it (no dangling joints). */
+export function removeBodyAndConnectors(scene: Scene, roomIndex: number, id: string): Scene {
+  const room = scene.rooms[roomIndex];
+  return replaceRoom(scene, roomIndex, {
+    ...room,
+    bodies: room.bodies.filter((b) => b.id !== id),
+    connectors: room.connectors.filter(
+      (c) => !(isBodyEndpoint(c.a) && c.a.body === id) && !(isBodyEndpoint(c.b) && c.b.body === id),
+    ),
   });
 }

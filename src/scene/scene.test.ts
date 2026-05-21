@@ -5,8 +5,13 @@ import {
   removeBody,
   updateBody,
   updateRoomSettings,
+  addConnector,
+  removeConnector,
+  updateConnector,
+  removeBodyAndConnectors,
   tracerScene,
 } from "./scene";
+import { makeBody } from "../registry/registry";
 
 describe("createScene", () => {
   it("starts with exactly one room holding empty, ordered body and connector arrays", () => {
@@ -109,6 +114,63 @@ describe("updateRoomSettings", () => {
     // Untouched fields are preserved; the input scene is unchanged.
     expect(next.rooms[0].settings.walls.floor).toBe(true);
     expect(scene.rooms[0].settings.gravity).toEqual({ x: 0, y: -9.81 });
+  });
+});
+
+describe("connector operations", () => {
+  const spring = (aBody: string, bBody: string) => ({
+    type: "spring" as const,
+    a: { body: aBody, local: { x: 0, y: 0 } },
+    b: { body: bBody, local: { x: 0, y: 0 } },
+    props: { stiffness: 50 },
+  });
+
+  it("addConnector appends with a unique 'c' id, ordered", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 }));
+    s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 2, y: 0 }));
+    s = b.scene;
+
+    const c1 = addConnector(s, 0, spring(a.id, b.id));
+    s = c1.scene;
+    expect(c1.id).toMatch(/^c\d+$/);
+    expect(s.rooms[0].connectors.map((c) => c.id)).toEqual([c1.id]);
+    expect(s.rooms[0].connectors[0].type).toBe("spring");
+  });
+
+  it("removeConnector and updateConnector behave like the body ops", () => {
+    let s = createScene();
+    const c = addConnector(s, 0, spring("b1", "b2"));
+    s = c.scene;
+
+    s = updateConnector(s, 0, c.id, { props: { stiffness: 200 } });
+    expect(s.rooms[0].connectors[0].props.stiffness).toBe(200);
+
+    s = removeConnector(s, 0, c.id);
+    expect(s.rooms[0].connectors).toEqual([]);
+  });
+
+  it("removeBodyAndConnectors drops connectors that referenced the body", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 }));
+    s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 2, y: 0 }));
+    s = b.scene;
+    s = addConnector(s, 0, spring(a.id, b.id)).scene;
+    // A connector to a fixed world point should survive removing an unrelated body.
+    s = addConnector(s, 0, {
+      type: "pin",
+      a: { body: b.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 5, y: 5 } },
+      props: {},
+    }).scene;
+
+    s = removeBodyAndConnectors(s, 0, a.id);
+
+    expect(s.rooms[0].bodies.map((x) => x.id)).toEqual([b.id]);
+    // Only the spring (which referenced a) is gone; the pin on b remains.
+    expect(s.rooms[0].connectors.map((c) => c.type)).toEqual(["pin"]);
   });
 });
 

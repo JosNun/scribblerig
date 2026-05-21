@@ -10,7 +10,8 @@
  */
 
 import RAPIER from "@dimforge/rapier2d-compat";
-import type { Body, Scene, Vec2 } from "../scene/scene";
+import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
+import { isBodyEndpoint } from "../scene/scene";
 import { def, type Props, type Shape } from "../registry/registry";
 
 const FIXED_DT = 1 / 60;
@@ -56,6 +57,11 @@ export function compile(scene: Scene): SimWorld {
     handles.set(body.id, compileBody(world, body));
   }
 
+  // Connectors compile to joints, in array order, after all bodies exist.
+  for (const conn of room.connectors) {
+    compileConnector(world, conn, room.bodies, handles);
+  }
+
   return {
     step: () => world.step(),
     readTransforms: () => {
@@ -93,6 +99,104 @@ function compileBody(world: RAPIER.World, body: Body): RAPIER.RigidBody {
     world.createCollider(collider, rb);
   }
   return rb;
+}
+
+/** World transform of an endpoint's host (a body, or a static anchor body). */
+interface EndHost {
+  rb: RAPIER.RigidBody;
+  pos: Vec2;
+  rot: number;
+}
+
+/**
+ * Compile a connector into a Rapier joint. World-point endpoints get a static
+ * anchor body. Joined bodies don't collide at the joint (contactsEnabled off).
+ */
+function compileConnector(
+  world: RAPIER.World,
+  conn: Connector,
+  bodies: Body[],
+  handles: Map<string, RAPIER.RigidBody>,
+): void {
+  const hostA = endHost(world, conn.a, bodies, handles);
+  const hostB = endHost(world, conn.b, bodies, handles);
+  if (!hostA || !hostB) return; // a referenced body was deleted
+
+  const anchorA = anchorLocal(conn.a);
+  const anchorB = anchorLocal(conn.b);
+  const worldA = toWorld(hostA, anchorA);
+  const worldB = toWorld(hostB, anchorB);
+  const props = conn.props as Props;
+
+  let jointData: RAPIER.JointData;
+  if (conn.type === "spring") {
+    const restLength = num(props.restLength, dist(worldA, worldB));
+    jointData = RAPIER.JointData.spring(
+      restLength,
+      num(props.stiffness, 80),
+      num(props.damping, 3),
+      anchorA,
+      anchorB,
+    );
+  } else if (conn.type === "pin") {
+    // Pivot at a world-point endpoint if there is one, else at endpoint A.
+    const pivot = !isBodyEndpoint(conn.a) ? worldA : !isBodyEndpoint(conn.b) ? worldB : worldA;
+    jointData = RAPIER.JointData.revolute(toLocalPt(hostA, pivot), toLocalPt(hostB, pivot));
+  } else {
+    // weld: lock the two bodies in their current relative pose (no snap).
+    const weldPt = worldA;
+    jointData = RAPIER.JointData.fixed(
+      toLocalPt(hostA, weldPt),
+      0,
+      toLocalPt(hostB, weldPt),
+      hostA.rot - hostB.rot,
+    );
+  }
+
+  const joint = world.createImpulseJoint(jointData, hostA.rb, hostB.rb, true);
+  // Bodies joined by a connector don't collide with each other at the joint.
+  (joint as RAPIER.ImpulseJoint).setContactsEnabled(false);
+}
+
+function endHost(
+  world: RAPIER.World,
+  ep: Endpoint,
+  bodies: Body[],
+  handles: Map<string, RAPIER.RigidBody>,
+): EndHost | null {
+  if (isBodyEndpoint(ep)) {
+    const rb = handles.get(ep.body);
+    const body = bodies.find((b) => b.id === ep.body);
+    if (!rb || !body) return null;
+    return { rb, pos: body.position, rot: body.rotation };
+  }
+  const rb = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(ep.world.x, ep.world.y),
+  );
+  return { rb, pos: ep.world, rot: 0 };
+}
+
+/** The endpoint's anchor in its host's local frame. */
+function anchorLocal(ep: Endpoint): Vec2 {
+  return isBodyEndpoint(ep) ? ep.local : { x: 0, y: 0 };
+}
+
+function toWorld(host: EndHost, local: Vec2): Vec2 {
+  const c = Math.cos(host.rot);
+  const s = Math.sin(host.rot);
+  return { x: host.pos.x + local.x * c - local.y * s, y: host.pos.y + local.x * s + local.y * c };
+}
+
+function toLocalPt(host: EndHost, world: Vec2): Vec2 {
+  const dx = world.x - host.pos.x;
+  const dy = world.y - host.pos.y;
+  const c = Math.cos(-host.rot);
+  const s = Math.sin(-host.rot);
+  return { x: dx * c - dy * s, y: dx * s + dy * c };
+}
+
+function dist(a: Vec2, b: Vec2): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 /** Map a registry shape descriptor to a Rapier collider descriptor. */

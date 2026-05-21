@@ -4,7 +4,8 @@
  * *what mutation happens* lives here and in `scene`.
  */
 
-import type { Body, Scene, Vec2 } from "../scene/scene";
+import type { Body, Endpoint, Scene, Vec2 } from "../scene/scene";
+import { isBodyEndpoint } from "../scene/scene";
 import { def, type Props, type Shape } from "../registry/registry";
 
 /** Round a world point to the nearest grid multiple. Size 0 disables snapping. */
@@ -54,6 +55,11 @@ function containsLocal(shape: Shape, local: Vec2): boolean {
 }
 
 // ----- transform helpers -----
+
+/** Transform a world point into a body's local frame. */
+export function bodyToLocal(body: Body, world: Vec2): Vec2 {
+  return toLocal(world, body.position, body.rotation);
+}
 
 /** Transform a body-local point into world space (rotate then translate). */
 export function bodyToWorld(body: Body, local: Vec2): Vec2 {
@@ -162,4 +168,39 @@ export function applyRotation(body: Body, pointerWorld: Vec2): number {
   const dx = pointerWorld.x - body.position.x;
   const dy = pointerWorld.y - body.position.y;
   return Math.atan2(dy, dx) - Math.PI / 2;
+}
+
+// ----- connectors -----
+
+/** World position of a connector endpoint given the design-graph body poses. */
+export function endpointWorld(scene: Scene, roomIndex: number, ep: Endpoint): Vec2 | null {
+  if (!isBodyEndpoint(ep)) return ep.world;
+  const body = scene.rooms[roomIndex].bodies.find((b) => b.id === ep.body);
+  return body ? bodyToWorld(body, ep.local) : null;
+}
+
+/** Id of the topmost connector whose line passes within `tol` of `point`, else null. */
+export function connectorAtPoint(
+  scene: Scene,
+  roomIndex: number,
+  point: Vec2,
+  tol: number,
+): string | null {
+  const conns = scene.rooms[roomIndex].connectors;
+  for (let i = conns.length - 1; i >= 0; i--) {
+    const a = endpointWorld(scene, roomIndex, conns[i].a);
+    const b = endpointWorld(scene, roomIndex, conns[i].b);
+    if (a && b && distToSegment(point, a, b) <= tol) return conns[i].id;
+  }
+  return null;
+}
+
+function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }

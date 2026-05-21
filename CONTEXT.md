@@ -62,8 +62,8 @@ Pure modules carry the value and the tests; impure modules are thin shells.
 | ------------- | ------ | -------------- |
 | `scene`       | pure   | Design-graph data structures + operations. Source of truth. |
 | `share-codec` | pure   | Scene ⇄ compressed URL string. *(not built yet — issue 08)* |
-| `registry`    | data   | Per-type declarations: geometry (shape descriptors), anchors, defaults, style. The body-type extensibility seam. See [ADR-0006](docs/adr/0006-registry-geometry-descriptors.md). |
-| `snapping`    | pure   | Given a dragged point + candidate anchors, choose the snap target. *(issue 05)* |
+| `registry`    | data   | Per-type declarations for bodies *and connectors*: geometry (shape descriptors), anchors, defaults, prop schema, style. The extensibility seam. See [ADR-0006](docs/adr/0006-registry-geometry-descriptors.md). |
+| `snapping`    | pure   | Given a dragged endpoint + candidate anchors, choose the target: nearest named anchor (within threshold) → body point → fixed world point. Deterministic tie-break. |
 | `clock`       | pure   | Fixed-timestep accumulator + play/pause/reset state machine. |
 | `sim`         | impure | Wraps Rapier. compile → world, step, readTransforms, live setters. **The only Rapier importer.** See [ADR-0002](docs/adr/0002-rapier-behind-sim-boundary.md). |
 | `renderer`    | impure | Draw cached Rough.js drawables under a camera transform (`camera` is pure + tested). |
