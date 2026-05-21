@@ -13,6 +13,7 @@ import type { Drawable } from "roughjs/bin/core";
 import type { Body, Scene } from "../scene/scene";
 import type { BodyTransform } from "../sim/sim";
 import { def, type Props, type Shape } from "../registry/registry";
+import { bodyHandles, bodyToWorld } from "../editor/editor";
 import { type Camera, worldToScreen } from "./camera";
 
 const WALL_THICKNESS = 0.5; // meters; mirrors the floor collider in sim
@@ -68,10 +69,41 @@ export function createRenderer(
         const t = transforms.get(body.id);
         if (!t) continue;
         drawBody(body, t);
-        if (body.id === selectedId) drawSelection(body, t);
+        if (body.id === selectedId) {
+          drawSelection(body, t);
+          drawHandles(body, t);
+        }
       }
     },
   };
+
+  /** Crisp resize/rotate handles for the selected body (a UI overlay). */
+  function drawHandles(body: Body, t: BodyTransform): void {
+    const posed = { ...body, position: t.position, rotation: t.rotation };
+    const center = worldToScreen(cam, t.position);
+    ctx.save();
+    for (const h of bodyHandles(posed)) {
+      const p = worldToScreen(cam, bodyToWorld(posed, h.local));
+      if (h.id === "rotate") {
+        ctx.strokeStyle = SELECT_COLOR;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(center.x, center.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = h.id === "rotate" ? SELECT_COLOR : "#fff";
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = h.id === "rotate" ? SELECT_COLOR : "#2b2b2b";
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   /** Crisp dashed bounding box marking the selected body (a UI overlay). */
   function drawSelection(body: Body, t: BodyTransform): void {

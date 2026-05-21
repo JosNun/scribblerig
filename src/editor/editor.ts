@@ -4,7 +4,7 @@
  * *what mutation happens* lives here and in `scene`.
  */
 
-import type { Scene, Vec2 } from "../scene/scene";
+import type { Body, Scene, Vec2 } from "../scene/scene";
 import { def, type Props, type Shape } from "../registry/registry";
 
 /** Round a world point to the nearest grid multiple. Size 0 disables snapping. */
@@ -51,4 +51,115 @@ function containsLocal(shape: Shape, local: Vec2): boolean {
   return (
     Math.abs(local.x) <= shape.halfWidth && Math.abs(local.y) <= shape.halfHeight
   );
+}
+
+// ----- transform helpers -----
+
+/** Transform a body-local point into world space (rotate then translate). */
+export function bodyToWorld(body: Body, local: Vec2): Vec2 {
+  const cos = Math.cos(body.rotation);
+  const sin = Math.sin(body.rotation);
+  return {
+    x: body.position.x + local.x * cos - local.y * sin,
+    y: body.position.y + local.x * sin + local.y * cos,
+  };
+}
+
+// ----- on-canvas resize / rotate handles -----
+
+export type HandleId = "rotate" | "nw" | "ne" | "se" | "sw" | "radius";
+export interface Handle {
+  id: HandleId;
+  local: Vec2;
+}
+
+/** Gap (meters) between a body's top edge and its rotation handle. */
+const ROTATE_GAP = 0.8;
+
+/** Bounding half-extents of a body's collision shapes, in local meters. */
+function halfExtents(body: Body): { hw: number; hh: number } {
+  let hw = 0;
+  let hh = 0;
+  for (const s of def(body.type).shapes(body.props as Props)) {
+    if (s.kind === "circle") {
+      hw = Math.max(hw, s.radius);
+      hh = Math.max(hh, s.radius);
+    } else {
+      hw = Math.max(hw, s.halfWidth);
+      hh = Math.max(hh, s.halfHeight);
+    }
+  }
+  return { hw, hh };
+}
+
+function isCircle(body: Body): boolean {
+  const shapes = def(body.type).shapes(body.props as Props);
+  return shapes.length === 1 && shapes[0].kind === "circle";
+}
+
+/** Manipulation handles for a body, in body-local coords. */
+export function bodyHandles(body: Body): Handle[] {
+  const { hw, hh } = halfExtents(body);
+  const handles: Handle[] = [{ id: "rotate", local: { x: 0, y: hh + ROTATE_GAP } }];
+  if (isCircle(body)) {
+    handles.push({ id: "radius", local: { x: hw, y: 0 } });
+  } else {
+    handles.push(
+      { id: "nw", local: { x: -hw, y: hh } },
+      { id: "ne", local: { x: hw, y: hh } },
+      { id: "se", local: { x: hw, y: -hh } },
+      { id: "sw", local: { x: -hw, y: -hh } },
+    );
+  }
+  return handles;
+}
+
+/** The handle whose world position is nearest `world` within `worldTol`, else null. */
+export function handleAtPoint(body: Body, world: Vec2, worldTol: number): HandleId | null {
+  let best: HandleId | null = null;
+  let bestDist = worldTol;
+  for (const h of bodyHandles(body)) {
+    const w = bodyToWorld(body, h.local);
+    const d = Math.hypot(w.x - world.x, w.y - world.y);
+    if (d <= bestDist) {
+      best = h.id;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+/** Min/max for a numeric prop from the type's schema, defaulting wide. */
+function range(body: Body, key: string): { min: number; max: number } {
+  const field = def(body.type).propSchema.find((f) => f.key === key);
+  return { min: field?.min ?? 0.1, max: field?.max ?? Infinity };
+}
+
+/**
+ * New size props from dragging a resize handle to `pointerWorld`. Boxes resize
+ * symmetrically about their center; circles resize by distance from center.
+ */
+export function applyResize(body: Body, handle: HandleId, pointerWorld: Vec2): Props {
+  const local = toLocal(pointerWorld, body.position, body.rotation);
+  if (handle === "radius") {
+    const r = range(body, "radius");
+    return { radius: clamp(Math.hypot(local.x, local.y), r.min, r.max) };
+  }
+  const w = range(body, "width");
+  const h = range(body, "height");
+  return {
+    width: clamp(Math.abs(local.x) * 2, w.min, w.max),
+    height: clamp(Math.abs(local.y) * 2, h.min, h.max),
+  };
+}
+
+/** New rotation (radians) so the upward rotation handle points at `pointerWorld`. */
+export function applyRotation(body: Body, pointerWorld: Vec2): number {
+  const dx = pointerWorld.x - body.position.x;
+  const dy = pointerWorld.y - body.position.y;
+  return Math.atan2(dy, dx) - Math.PI / 2;
 }

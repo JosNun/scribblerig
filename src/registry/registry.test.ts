@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bodyTypes, def, makeBody } from "./registry";
+import { bodyTypes, def, makeBody, type BodyTypeDef } from "./registry";
 
 describe("registry", () => {
   it("offers ball, platform, and wheel as placeable body types", () => {
@@ -23,6 +23,29 @@ describe("registry", () => {
     expect(def("platform").shapes(def("platform").defaults)).toEqual([
       { kind: "box", halfWidth: expect.any(Number), halfHeight: expect.any(Number) },
     ]);
+  });
+
+  it("exposes a property schema covering each type's editable props", () => {
+    const keys = (d: BodyTypeDef) => d.propSchema.map((f) => f.key);
+    expect(keys(def("platform"))).toEqual(
+      expect.arrayContaining(["width", "height", "friction", "static"]),
+    );
+    expect(keys(def("ball"))).toEqual(
+      expect.arrayContaining(["radius", "restitution", "density"]),
+    );
+    expect(keys(def("wheel"))).toEqual(
+      expect.arrayContaining(["radius", "friction", "density"]),
+    );
+  });
+
+  it("every schema field has a matching default value", () => {
+    for (const d of bodyTypes()) {
+      for (const field of d.propSchema) {
+        expect(d.defaults).toHaveProperty(field.key);
+        const expected = field.kind === "boolean" ? "boolean" : "number";
+        expect(typeof d.defaults[field.key]).toBe(expected);
+      }
+    }
   });
 
   it("gives the wheel render-only spoke marks; ball and platform have none", () => {

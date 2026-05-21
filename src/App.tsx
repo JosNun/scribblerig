@@ -11,9 +11,20 @@ import { createClock, type Clock, type ClockState } from "./clock/clock";
 import { initSim, compile, type SimWorld, type BodyTransform } from "./sim/sim";
 import { type Camera, fitCamera, screenToWorld } from "./renderer/camera";
 import { createRenderer, type Renderer } from "./renderer/renderer";
-import { bodyTypes, makeBody } from "./registry/registry";
-import { snapToGrid, bodyAtPoint } from "./editor/editor";
+import { bodyTypes, makeBody, type Props } from "./registry/registry";
+import {
+  snapToGrid,
+  bodyAtPoint,
+  handleAtPoint,
+  applyResize,
+  applyRotation,
+  type HandleId,
+} from "./editor/editor";
 import { BodyPreview } from "./ui/BodyPreview";
+import { PropertyPanel } from "./ui/PropertyPanel";
+
+/** Click tolerance (px) for grabbing a resize/rotate handle. */
+const HANDLE_PX = 12;
 
 const FIXED_DT = 1 / 60;
 const GRID_SIZE = 0.5; // meters
@@ -47,6 +58,7 @@ export default function App() {
   const snapRef = useRef(true);
   const selectedRef = useRef<string | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const handleDragRef = useRef<HandleId | null>(null);
   const placingRef = useRef<BodyType | null>(null);
 
   const [ready, setReady] = useState(false);
@@ -54,8 +66,15 @@ export default function App() {
   const [snap, setSnap] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [ghost, setGhost] = useState<{ type: BodyType; x: number; y: number } | null>(null);
+  // Bumped on scene-ref edits the UI must reflect (the canvas redraws from the
+  // ref every frame regardless, but React panels need a nudge).
+  const [, setRevision] = useState(0);
+  const bump = () => setRevision((r) => r + 1);
 
   const building = state === "build";
+  const selectedBody = selected
+    ? (sceneRef.current.rooms[0].bodies.find((b) => b.id === selected) ?? null)
+    : null;
 
   // ----- boot + resize + render loop -----
   useEffect(() => {
@@ -153,28 +172,61 @@ export default function App() {
     return snapRef.current ? snapToGrid(world, GRID_SIZE) : world;
   };
 
-  // Modeless: clicking a body selects+drags it; clicking empty space deselects.
+  const bodyById = (id: string) => sceneRef.current.rooms[0].bodies.find((b) => b.id === id);
+
+  // Modeless: a resize/rotate handle on the selected body takes priority; else
+  // clicking a body selects+drags it; clicking empty space deselects.
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (!building) return;
-    const world = canvasWorld(e.clientX, e.clientY);
+    const raw = screenToWorld(cameraRef.current, pointerInCanvas(e));
+
+    const sel = selectedRef.current ? bodyById(selectedRef.current) : null;
+    if (sel) {
+      const handle = handleAtPoint(sel, raw, HANDLE_PX / cameraRef.current.scale);
+      if (handle) {
+        handleDragRef.current = handle;
+        capture(canvasRef.current, e.pointerId);
+        return;
+      }
+    }
+
+    const world = snapRef.current ? snapToGrid(raw, GRID_SIZE) : raw;
     const hit = bodyAtPoint(sceneRef.current, 0, world);
     select(hit);
     if (hit) {
-      const body = sceneRef.current.rooms[0].bodies.find((b) => b.id === hit)!;
+      const body = bodyById(hit)!;
       dragOffsetRef.current = { x: body.position.x - world.x, y: body.position.y - world.y };
       capture(canvasRef.current, e.pointerId);
     }
   };
   const onCanvasPointerMove = (e: React.PointerEvent) => {
-    if (!building || !dragOffsetRef.current || !selectedRef.current) return;
+    if (!building || !selectedRef.current) return;
     const raw = screenToWorld(cameraRef.current, pointerInCanvas(e));
-    const off = dragOffsetRef.current;
-    const moved = { x: raw.x + off.x, y: raw.y + off.y };
-    const next = snapRef.current ? snapToGrid(moved, GRID_SIZE) : moved;
-    sceneRef.current = updateBody(sceneRef.current, 0, selectedRef.current, { position: next });
+    const id = selectedRef.current;
+    const body = bodyById(id);
+    if (!body) return;
+
+    if (handleDragRef.current) {
+      // Resize/rotate: free (un-snapped) for smooth manipulation.
+      if (handleDragRef.current === "rotate") {
+        sceneRef.current = updateBody(sceneRef.current, 0, id, { rotation: applyRotation(body, raw) });
+      } else {
+        const props = { ...body.props, ...applyResize(body, handleDragRef.current, raw) };
+        sceneRef.current = updateBody(sceneRef.current, 0, id, { props });
+      }
+      bump();
+      return;
+    }
+    if (dragOffsetRef.current) {
+      const off = dragOffsetRef.current;
+      const moved = { x: raw.x + off.x, y: raw.y + off.y };
+      const next = snapRef.current ? snapToGrid(moved, GRID_SIZE) : moved;
+      sceneRef.current = updateBody(sceneRef.current, 0, id, { position: next });
+    }
   };
   const onCanvasPointerUp = (e: React.PointerEvent) => {
     dragOffsetRef.current = null;
+    handleDragRef.current = null;
     if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
       canvasRef.current.releasePointerCapture(e.pointerId);
     }
@@ -182,6 +234,14 @@ export default function App() {
   const pointerInCanvas = (e: React.PointerEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const onPropChange = (patch: Props) => {
+    const id = selectedRef.current;
+    const body = id ? bodyById(id) : null;
+    if (!id || !body) return;
+    sceneRef.current = updateBody(sceneRef.current, 0, id, { props: { ...body.props, ...patch } });
+    bump();
   };
 
   const deleteSelected = () => {
@@ -271,6 +331,11 @@ export default function App() {
           {building ? "Drag a shape in · click to select · drag to move" : "Press ↺ to edit"}
         </span>
       </div>
+
+      {/* Property panel — floating right, for the selected body in build mode */}
+      {building && selectedBody && (
+        <PropertyPanel body={selectedBody} onChange={onPropChange} />
+      )}
 
       {/* Drag ghost following the cursor, sized to the body's true scale */}
       {ghost && (

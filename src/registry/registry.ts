@@ -30,6 +30,19 @@ export interface NamedAnchor {
   local: Vec2;
 }
 
+/**
+ * One editable property. The property panel renders an editor from this with no
+ * per-type code, and serialization is automatic since props live on the body.
+ */
+export interface PropField {
+  key: string;
+  label: string;
+  kind: "number" | "boolean";
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
 export interface BodyTypeDef {
   type: BodyType;
   /** Display name for the palette. */
@@ -40,6 +53,8 @@ export interface BodyTypeDef {
   shapes(props: Props): Shape[];
   /** Render-only decorations (no collision), e.g. wheel spokes. */
   marks?(props: Props): Mark[];
+  /** Editable properties, rendered by the generic property panel. */
+  propSchema: PropField[];
   /** Named anchor points for connector snapping (used from issue 05 on). */
   anchors(props: Props): NamedAnchor[];
   /** Doodle rendering style. */
@@ -57,6 +72,11 @@ const BALL: BodyTypeDef = {
   defaults: { radius: 0.5, restitution: 0.7, density: 1 },
   isStatic: () => false,
   shapes: (p) => [{ kind: "circle", radius: n(p, "radius", 0.5) }],
+  propSchema: [
+    { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1 },
+    { key: "restitution", label: "Bounciness", kind: "number", min: 0, max: 1, step: 0.05 },
+    { key: "density", label: "Density", kind: "number", min: 0.1, max: 5, step: 0.1 },
+  ],
   anchors: () => [{ name: "center", local: { x: 0, y: 0 } }],
   style: { fill: "#e8743b", fillStyle: "hachure" },
 };
@@ -68,6 +88,12 @@ const PLATFORM: BodyTypeDef = {
   isStatic: (p) => p.static !== false,
   shapes: (p) => [
     { kind: "box", halfWidth: n(p, "width", 3) / 2, halfHeight: n(p, "height", 0.4) / 2 },
+  ],
+  propSchema: [
+    { key: "width", label: "Width", kind: "number", min: 0.5, max: 12, step: 0.1 },
+    { key: "height", label: "Height", kind: "number", min: 0.1, max: 4, step: 0.1 },
+    { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05 },
+    { key: "static", label: "Static (immovable)", kind: "boolean" },
   ],
   anchors: (p) => {
     const hw = n(p, "width", 3) / 2;
@@ -97,6 +123,11 @@ const WHEEL: BodyTypeDef = {
       { kind: "line", a: { x: 0, y: -r }, b: { x: 0, y: r } },
     ];
   },
+  propSchema: [
+    { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1 },
+    { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05 },
+    { key: "density", label: "Density", kind: "number", min: 0.1, max: 5, step: 0.1 },
+  ],
   anchors: () => [{ name: "center", local: { x: 0, y: 0 } }],
   style: { fill: "#5b8fa3", fillStyle: "zigzag" },
 };
