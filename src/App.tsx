@@ -60,6 +60,11 @@ export default function App() {
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const handleDragRef = useRef<HandleId | null>(null);
   const placingRef = useRef<BodyType | null>(null);
+  // Drag-from-palette: the origin button's rect and whether the pointer has
+  // actually left it. A plain click never leaves the button, so it places
+  // nothing.
+  const paletteOriginRef = useRef<DOMRect | null>(null);
+  const draggedOffRef = useRef(false);
 
   const [ready, setReady] = useState(false);
   const [state, setState] = useState<ClockState>("build");
@@ -257,22 +262,29 @@ export default function App() {
     if (!building) return;
     e.preventDefault();
     placingRef.current = type;
-    setGhost({ type, x: e.clientX, y: e.clientY });
+    paletteOriginRef.current = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    draggedOffRef.current = false;
     capture(e.currentTarget as HTMLElement, e.pointerId);
   };
   const onPaletteMove = (e: React.PointerEvent) => {
     if (!placingRef.current) return;
-    setGhost({ type: placingRef.current, x: e.clientX, y: e.clientY });
+    const r = paletteOriginRef.current;
+    if (r && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) {
+      draggedOffRef.current = true;
+    }
+    // Only show the ghost once the drag has left the button.
+    setGhost(draggedOffRef.current ? { type: placingRef.current, x: e.clientX, y: e.clientY } : null);
   };
   const onPaletteUp = (e: React.PointerEvent) => {
     const type = placingRef.current;
+    const draggedOff = draggedOffRef.current;
     placingRef.current = null;
+    paletteOriginRef.current = null;
+    draggedOffRef.current = false;
     setGhost(null);
-    if (!type || !building) return;
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const inside =
-      e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-    if (!inside) return;
+    if (!type || !building || !draggedOff) return;
+    // Drop only over open stage — not over a floating panel.
+    if (document.elementFromPoint(e.clientX, e.clientY) !== canvasRef.current) return;
     const world = canvasWorld(e.clientX, e.clientY);
     const added = addBody(sceneRef.current, 0, makeBody(type, world));
     sceneRef.current = added.scene;

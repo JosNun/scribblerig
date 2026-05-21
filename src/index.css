@@ -101,6 +101,7 @@ body,
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  width: 92px;
   padding: 6px 8px !important;
   font-size: 13px;
   cursor: grab;
