@@ -1,0 +1,139 @@
+:root {
+  font-family: ui-rounded, "Comic Sans MS", system-ui, sans-serif;
+  color: #2b2b2b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.app {
+  position: fixed;
+  inset: 0;
+}
+
+/* Full-screen room */
+.stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: #fdf6e3;
+  touch-action: none;
+}
+
+/* Floating panels overlaid on the stage */
+.panel {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 253, 247, 0.92);
+  border: 2.5px solid #2b2b2b;
+  border-radius: 14px;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(2px);
+}
+
+.transport {
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.transport button {
+  font-size: 18px;
+  width: 40px;
+  height: 40px;
+}
+
+.actions {
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.panel button {
+  font: inherit;
+  padding: 6px 12px;
+  border: 2px solid #2b2b2b;
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.panel button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.panel .state {
+  font-variant: small-caps;
+  opacity: 0.7;
+  padding: 0 4px;
+}
+
+/* Palette — vertical strip of draggable shapes */
+.palette {
+  top: 50%;
+  left: 16px;
+  transform: translateY(-50%);
+  flex-direction: column;
+}
+
+.palette[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.palette-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px !important;
+  font-size: 13px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.palette-item:active {
+  cursor: grabbing;
+  background: #f0e9d8;
+}
+
+.palette-item canvas {
+  pointer-events: none;
+}
+
+.snap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.tip {
+  font-size: 13px;
+  opacity: 0.6;
+  padding-left: 4px;
+}
+
+/* Drag ghost following the cursor */
+.ghost {
+  position: fixed;
+  z-index: 50;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0.8;
+}
