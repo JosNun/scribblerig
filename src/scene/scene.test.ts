@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createScene, addBody, removeBody, updateBody, tracerScene } from "./scene";
+import {
+  createScene,
+  addBody,
+  removeBody,
+  updateBody,
+  updateRoomSettings,
+  tracerScene,
+} from "./scene";
 
 describe("createScene", () => {
   it("starts with exactly one room holding empty, ordered body and connector arrays", () => {
@@ -77,6 +84,31 @@ describe("updateBody", () => {
     expect(body.position).toEqual({ x: 3, y: 4 });
     expect(body.props.radius).toBe(1);
     expect(body.type).toBe("ball");
+  });
+});
+
+describe("default room", () => {
+  it("opens with a floor, downward gravity, and grid snap on", () => {
+    const settings = createScene().rooms[0].settings;
+    expect(settings.walls.floor).toBe(true);
+    expect(settings.gravity).toEqual({ x: 0, y: -9.81 });
+    expect(settings.snap).toBe(true);
+  });
+});
+
+describe("updateRoomSettings", () => {
+  it("merges a settings patch without mutating the input scene", () => {
+    const scene = createScene();
+    const next = updateRoomSettings(scene, 0, {
+      gravity: { x: 9.81, y: 0 },
+      snap: false,
+    });
+
+    expect(next.rooms[0].settings.gravity).toEqual({ x: 9.81, y: 0 });
+    expect(next.rooms[0].settings.snap).toBe(false);
+    // Untouched fields are preserved; the input scene is unchanged.
+    expect(next.rooms[0].settings.walls.floor).toBe(true);
+    expect(scene.rooms[0].settings.gravity).toEqual({ x: 0, y: -9.81 });
   });
 });
 

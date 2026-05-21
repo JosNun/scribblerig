@@ -4,8 +4,10 @@ import {
   addBody,
   removeBody,
   updateBody,
+  updateRoomSettings,
   type Scene,
   type BodyType,
+  type RoomSettings,
 } from "./scene/scene";
 import { createClock, type Clock, type ClockState } from "./clock/clock";
 import { initSim, compile, type SimWorld, type BodyTransform } from "./sim/sim";
@@ -22,12 +24,15 @@ import {
 } from "./editor/editor";
 import { BodyPreview } from "./ui/BodyPreview";
 import { PropertyPanel } from "./ui/PropertyPanel";
+import { RoomSettingsPanel } from "./ui/RoomSettingsPanel";
 
 /** Click tolerance (px) for grabbing a resize/rotate handle. */
 const HANDLE_PX = 12;
 
 const FIXED_DT = 1 / 60;
 const GRID_SIZE = 0.5; // meters
+/** Framing margin (meters) around the room so the boundary walls stay visible. */
+const VIEW_MARGIN = 1.2;
 
 /** Pointer capture, tolerant of sequences where the pointer isn't capturable. */
 function capture(el: Element | null, pointerId: number) {
@@ -50,12 +55,13 @@ function designTransforms(scene: Scene): Map<string, BodyTransform> {
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
-  const cameraRef = useRef<Camera>(fitCamera(16, 9, window.innerWidth, window.innerHeight));
+  const cameraRef = useRef<Camera>(
+    fitCamera(16, 9, window.innerWidth, window.innerHeight, VIEW_MARGIN),
+  );
   const clockRef = useRef<Clock>(createClock(FIXED_DT));
   const worldRef = useRef<SimWorld | null>(null);
 
   const sceneRef = useRef<Scene>(tracerScene());
-  const snapRef = useRef(true);
   const selectedRef = useRef<string | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const handleDragRef = useRef<HandleId | null>(null);
@@ -68,7 +74,6 @@ export default function App() {
 
   const [ready, setReady] = useState(false);
   const [state, setState] = useState<ClockState>("build");
-  const [snap, setSnap] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   // `droppable` = the cursor is currently over open stage (a valid drop); when
   // false (back over the palette/panels) the ghost animates out.
@@ -84,9 +89,12 @@ export default function App() {
   const bump = () => setRevision((r) => r + 1);
 
   const building = state === "build";
+  const roomSettings = sceneRef.current.rooms[0].settings;
+  const snap = roomSettings.snap;
   const selectedBody = selected
     ? (sceneRef.current.rooms[0].bodies.find((b) => b.id === selected) ?? null)
     : null;
+  const snapOn = () => sceneRef.current.rooms[0].settings.snap;
 
   // ----- boot + resize + render loop -----
   useEffect(() => {
@@ -100,7 +108,7 @@ export default function App() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
       const room = sceneRef.current.rooms[0].settings.size;
-      cameraRef.current = fitCamera(room.width, room.height, canvas.width, canvas.height);
+      cameraRef.current = fitCamera(room.width, room.height, canvas.width, canvas.height, VIEW_MARGIN);
       rendererRef.current?.setCamera(cameraRef.current);
     };
 
@@ -181,7 +189,7 @@ export default function App() {
   const canvasWorld = (clientX: number, clientY: number) => {
     const rect = canvasRef.current!.getBoundingClientRect();
     const world = screenToWorld(cameraRef.current, { x: clientX - rect.left, y: clientY - rect.top });
-    return snapRef.current ? snapToGrid(world, GRID_SIZE) : world;
+    return snapOn() ? snapToGrid(world, GRID_SIZE) : world;
   };
 
   const bodyById = (id: string) => sceneRef.current.rooms[0].bodies.find((b) => b.id === id);
@@ -202,7 +210,7 @@ export default function App() {
       }
     }
 
-    const world = snapRef.current ? snapToGrid(raw, GRID_SIZE) : raw;
+    const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
     const hit = bodyAtPoint(sceneRef.current, 0, world);
     select(hit);
     if (hit) {
@@ -232,7 +240,7 @@ export default function App() {
     if (dragOffsetRef.current) {
       const off = dragOffsetRef.current;
       const moved = { x: raw.x + off.x, y: raw.y + off.y };
-      const next = snapRef.current ? snapToGrid(moved, GRID_SIZE) : moved;
+      const next = snapOn() ? snapToGrid(moved, GRID_SIZE) : moved;
       sceneRef.current = updateBody(sceneRef.current, 0, id, { position: next });
     }
   };
@@ -304,10 +312,11 @@ export default function App() {
     select(added.id);
   };
 
-  const toggleSnap = () => {
-    snapRef.current = !snapRef.current;
-    setSnap(snapRef.current);
+  const onRoomChange = (patch: Partial<RoomSettings>) => {
+    sceneRef.current = updateRoomSettings(sceneRef.current, 0, patch);
+    bump();
   };
+  const toggleSnap = () => onRoomChange({ snap: !snapOn() });
 
   return (
     <div className="app">
@@ -357,10 +366,13 @@ export default function App() {
         </span>
       </div>
 
-      {/* Property panel — floating right, for the selected body in build mode */}
-      {building && selectedBody && (
-        <PropertyPanel body={selectedBody} onChange={onPropChange} />
-      )}
+      {/* Right panel — selected body's properties, or room settings if none */}
+      {building &&
+        (selectedBody ? (
+          <PropertyPanel body={selectedBody} onChange={onPropChange} />
+        ) : (
+          <RoomSettingsPanel settings={roomSettings} onChange={onRoomChange} />
+        ))}
 
       {/* Drag ghost following the cursor, sized to the body's true scale.
           Shrinks/fades out when it's not over a droppable area. */}

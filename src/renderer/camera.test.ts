@@ -34,4 +34,12 @@ describe("camera", () => {
     // Room is 900px tall, centered in 1000px → 50px margin top and bottom.
     expect(worldToScreen(cam, { x: 0, y: 0 }).y).toBe(950);
   });
+
+  it("fitCamera with a margin shrinks the room and keeps the walls on-screen", () => {
+    // 16×9 room + 1m margin each side → fit 18×11 into 1600×900.
+    const cam = fitCamera(16, 9, 1600, 900, 1);
+    expect(cam.scale).toBeCloseTo(Math.min(1600 / 18, 900 / 11), 5);
+    // The floor (y=0) sits inside the viewport, not on its bottom edge.
+    expect(worldToScreen(cam, { x: 0, y: 0 }).y).toBeLessThan(900);
+  });
 });

@@ -63,7 +63,7 @@ export function createRenderer(
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const room = scene.rooms[0];
 
-      if (room.settings.walls.floor) drawFloor(room.settings.size.width);
+      drawWalls(room.settings.walls, room.settings.size);
 
       for (const body of room.bodies) {
         const t = transforms.get(body.id);
@@ -183,12 +183,25 @@ export function createRenderer(
     return rc.generator.rectangle(-w / 2, -h / 2, w, h, options);
   }
 
-  function drawFloor(width: number): void {
-    const topLeft = worldToScreen(cam, { x: -width / 2, y: 0 });
-    const w = width * cam.scale;
-    const h = WALL_THICKNESS * cam.scale;
-    const drawable = cached(`floor:${width}`, () =>
-      rc.generator.rectangle(topLeft.x, topLeft.y, w, h, {
+  function drawWalls(
+    walls: { floor: boolean; ceiling: boolean; left: boolean; right: boolean },
+    size: { width: number; height: number },
+  ): void {
+    const w = size.width;
+    const h = size.height;
+    const t = WALL_THICKNESS;
+    // Each wall as a world-space box [minX, maxY (top-left), width, height],
+    // sitting just outside the play area to match sim's boundary colliders.
+    if (walls.floor) drawWall("floor", -w / 2, 0, w, t);
+    if (walls.ceiling) drawWall("ceiling", -w / 2, h + t, w, t);
+    if (walls.left) drawWall("left", -w / 2 - t, h, t, h);
+    if (walls.right) drawWall("right", w / 2, h, t, h);
+  }
+
+  function drawWall(key: string, minX: number, maxY: number, wM: number, hM: number): void {
+    const topLeft = worldToScreen(cam, { x: minX, y: maxY });
+    const drawable = cached(`wall:${key}:${wM}x${hM}`, () =>
+      rc.generator.rectangle(topLeft.x, topLeft.y, wM * cam.scale, hM * cam.scale, {
         fill: FLOOR_FILL,
         fillStyle: "cross-hatch",
         stroke: INK,

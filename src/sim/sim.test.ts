@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { initSim, compile } from "./sim";
-import { createScene, addBody, tracerScene } from "../scene/scene";
+import { createScene, addBody, updateRoomSettings, tracerScene } from "../scene/scene";
 import { makeBody } from "../registry/registry";
 
 beforeAll(async () => {
@@ -108,6 +108,53 @@ describe("registry-driven body types", () => {
     // The ball lands on top of the platform (above its center at y = 2).
     expect(transforms.get(ball.id)!.position.y).toBeGreaterThan(2);
     expect(transforms.get(ball.id)!.position.y).toBeLessThan(5);
+    world.free();
+  });
+});
+
+describe("room settings feed the simulation", () => {
+  it("leaves a body floating under zero gravity", () => {
+    let scene = tracerScene();
+    scene = updateRoomSettings(scene, 0, { gravity: { x: 0, y: 0 } });
+    const id = scene.rooms[0].bodies[0].id;
+    const startY = scene.rooms[0].bodies[0].position.y;
+
+    const world = compile(scene);
+    for (let i = 0; i < 120; i++) world.step();
+
+    expect(world.readTransforms().get(id)!.position.y).toBeCloseTo(startY, 2);
+    world.free();
+  });
+
+  it("pulls a body sideways under sideways gravity", () => {
+    let scene = tracerScene();
+    scene = updateRoomSettings(scene, 0, { gravity: { x: 9.81, y: 0 } });
+    const id = scene.rooms[0].bodies[0].id;
+
+    const world = compile(scene);
+    for (let i = 0; i < 30; i++) world.step();
+
+    expect(world.readTransforms().get(id)!.position.x).toBeGreaterThan(0.1);
+    world.free();
+  });
+
+  it("stops a body at an enabled side wall", () => {
+    // Rightward gravity + a right wall: the ball can't leave the room (half
+    // width 8), so its center stays clear of the right boundary.
+    let scene = tracerScene();
+    scene = updateRoomSettings(scene, 0, {
+      gravity: { x: 9.81, y: 0 },
+      walls: { floor: true, ceiling: false, left: false, right: true },
+    });
+    const id = scene.rooms[0].bodies[0].id;
+
+    const world = compile(scene);
+    let maxX = -Infinity;
+    for (let i = 0; i < 600; i++) {
+      world.step();
+      maxX = Math.max(maxX, world.readTransforms().get(id)!.position.x);
+    }
+    expect(maxX).toBeLessThan(8);
     world.free();
   });
 });

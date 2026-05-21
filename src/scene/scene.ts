@@ -34,6 +34,8 @@ export interface RoomSettings {
   walls: { floor: boolean; ceiling: boolean; left: boolean; right: boolean };
   /** Room extent in meters. */
   size: { width: number; height: number };
+  /** Whether placement/drag snaps to the grid. */
+  snap: boolean;
 }
 
 export interface Room {
@@ -57,6 +59,7 @@ export function defaultRoomSettings(): RoomSettings {
     gravity: { x: 0, y: -9.81 },
     walls: { floor: true, ceiling: false, left: false, right: false },
     size: { width: 16, height: 9 },
+    snap: true,
   };
 }
 
@@ -116,6 +119,19 @@ export function removeBody(scene: Scene, roomIndex: number, id: string): Scene {
   return replaceRoom(scene, roomIndex, {
     ...room,
     bodies: room.bodies.filter((b) => b.id !== id),
+  });
+}
+
+/** Shallow-merge a patch into a room's settings. */
+export function updateRoomSettings(
+  scene: Scene,
+  roomIndex: number,
+  patch: Partial<RoomSettings>,
+): Scene {
+  const room = scene.rooms[roomIndex];
+  return replaceRoom(scene, roomIndex, {
+    ...room,
+    settings: { ...room.settings, ...patch },
   });
 }
 

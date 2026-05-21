@@ -42,12 +42,15 @@ export function fitCamera(
   roomH: number,
   viewW: number,
   viewH: number,
+  margin = 0,
 ): Camera {
-  const scale = Math.min(viewW / roomW, viewH / roomH);
+  // Fit the room plus a margin (meters) on every side, so the boundary walls —
+  // which sit just outside the play area — stay visible and the room is framed.
+  const scale = Math.min(viewW / (roomW + 2 * margin), viewH / (roomH + 2 * margin));
   return {
     scale,
     originX: viewW / 2,
-    // world y=0 (floor) maps to the bottom edge of the centered room rectangle.
-    originY: (viewH + roomH * scale) / 2,
+    // Room's vertical center (y = roomH/2) maps to the viewport center.
+    originY: viewH / 2 + (roomH / 2) * scale,
   };
 }
