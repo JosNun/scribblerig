@@ -131,6 +131,18 @@ export function createRenderer(
       const pivotWorld = !isBodyEndpoint(conn.a) ? aw : !isBodyEndpoint(conn.b) ? bw : aw;
       ring(worldToScreen(cam, pivotWorld), 6);
     }
+    // Draggable endpoint handles when selected.
+    if (selected) {
+      ctx.fillStyle = SELECT_COLOR;
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1.5;
+      for (const p of [pa, pb]) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
     ctx.restore();
   }
 

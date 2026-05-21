@@ -41,6 +41,8 @@ export interface PropField {
   min?: number;
   max?: number;
   step?: number;
+  /** One-line explanation shown as a help tooltip in the property panel. */
+  help?: string;
 }
 
 export interface BodyTypeDef {
@@ -73,9 +75,9 @@ const BALL: BodyTypeDef = {
   isStatic: () => false,
   shapes: (p) => [{ kind: "circle", radius: n(p, "radius", 0.5) }],
   propSchema: [
-    { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1 },
-    { key: "restitution", label: "Bounciness", kind: "number", min: 0, max: 1, step: 0.05 },
-    { key: "density", label: "Density", kind: "number", min: 0.1, max: 5, step: 0.1 },
+    { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1, help: "How big the ball is, in meters." },
+    { key: "restitution", label: "Bounciness", kind: "number", min: 0, max: 1, step: 0.05, help: "Energy kept on impact: 0 is a dead thud, 1 bounces back fully." },
+    { key: "density", label: "Density", kind: "number", min: 0.1, max: 5, step: 0.1, help: "Mass per area — heavier balls are harder to push around." },
   ],
   anchors: () => [{ name: "center", local: { x: 0, y: 0 } }],
   style: { fill: "#e8743b", fillStyle: "hachure" },
@@ -90,10 +92,10 @@ const PLATFORM: BodyTypeDef = {
     { kind: "box", halfWidth: n(p, "width", 3) / 2, halfHeight: n(p, "height", 0.4) / 2 },
   ],
   propSchema: [
-    { key: "width", label: "Width", kind: "number", min: 0.5, max: 12, step: 0.1 },
-    { key: "height", label: "Height", kind: "number", min: 0.1, max: 4, step: 0.1 },
-    { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05 },
-    { key: "static", label: "Static (immovable)", kind: "boolean" },
+    { key: "width", label: "Width", kind: "number", min: 0.5, max: 12, step: 0.1, help: "How wide the platform is, in meters." },
+    { key: "height", label: "Height", kind: "number", min: 0.1, max: 4, step: 0.1, help: "How thick the platform is, in meters." },
+    { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05, help: "Grip — high friction stops things sliding across it." },
+    { key: "static", label: "Static (immovable)", kind: "boolean", help: "When on, the platform is fixed in place and ignores gravity. Turn off to let it move and fall." },
   ],
   anchors: (p) => {
     const hw = n(p, "width", 3) / 2;
@@ -124,9 +126,9 @@ const WHEEL: BodyTypeDef = {
     ];
   },
   propSchema: [
-    { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1 },
-    { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05 },
-    { key: "density", label: "Density", kind: "number", min: 0.1, max: 5, step: 0.1 },
+    { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1, help: "How big the wheel is, in meters." },
+    { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05, help: "Grip — high friction lets the wheel roll instead of slip." },
+    { key: "density", label: "Density", kind: "number", min: 0.1, max: 5, step: 0.1, help: "Mass per area — heavier wheels carry more momentum." },
   ],
   anchors: () => [{ name: "center", local: { x: 0, y: 0 } }],
   style: { fill: "#5b8fa3", fillStyle: "zigzag" },
@@ -167,6 +169,8 @@ export interface ConnectorTypeDef {
   propSchema: PropField[];
   /** Doodle stroke colour for rendering the connector. */
   stroke: string;
+  /** When to reach for this connector — shown as a tooltip on the palette. */
+  help: string;
 }
 
 const SPRING: ConnectorTypeDef = {
@@ -174,11 +178,12 @@ const SPRING: ConnectorTypeDef = {
   label: "Spring",
   defaults: { stiffness: 80, restLength: 2, damping: 3 },
   propSchema: [
-    { key: "stiffness", label: "Stiffness", kind: "number", min: 1, max: 500, step: 1 },
-    { key: "restLength", label: "Rest length", kind: "number", min: 0.1, max: 12, step: 0.1 },
-    { key: "damping", label: "Damping", kind: "number", min: 0, max: 50, step: 0.5 },
+    { key: "stiffness", label: "Stiffness", kind: "number", min: 1, max: 500, step: 1, help: "How strongly the spring pulls back to its rest length — stiffer is snappier." },
+    { key: "restLength", label: "Rest length", kind: "number", min: 0.1, max: 12, step: 0.1, help: "The spring's natural length: it pulls in when stretched longer and pushes out when squeezed shorter." },
+    { key: "damping", label: "Damping", kind: "number", min: 0, max: 50, step: 0.5, help: "How fast the bouncing dies down — higher damping settles sooner." },
   ],
   stroke: "#7a5b9b",
+  help: "Springy elastic link: pulls two points toward a rest length. Use for bounce, suspension, or wobble.",
 };
 
 const WELD: ConnectorTypeDef = {
@@ -187,6 +192,7 @@ const WELD: ConnectorTypeDef = {
   defaults: {},
   propSchema: [],
   stroke: "#b5651d",
+  help: "Rigidly fuses two bodies so they move as one. Use to build a bigger compound shape.",
 };
 
 const PIN: ConnectorTypeDef = {
@@ -195,6 +201,7 @@ const PIN: ConnectorTypeDef = {
   defaults: {},
   propSchema: [],
   stroke: "#2b2b2b",
+  help: "A free pivot: the bodies rotate about a shared point. Use for pendulums, levers, and hinges.",
 };
 
 const CONNECTOR_ORDER: ConnectorTypeDef[] = [SPRING, WELD, PIN];

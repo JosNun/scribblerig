@@ -31,6 +31,7 @@ import {
   snapToGrid,
   bodyAtPoint,
   connectorAtPoint,
+  endpointWorld,
   handleAtPoint,
   applyResize,
   applyRotation,
@@ -47,6 +48,8 @@ const HANDLE_PX = 12;
 const ANCHOR_PX = 20;
 /** Pick tolerance (px) for selecting a connector by its line. */
 const CONNECTOR_PX = 10;
+/** Grab tolerance (px) for a selected connector's endpoint handle. */
+const ENDPOINT_PX = 12;
 
 const FIXED_DT = 1 / 60;
 const GRID_SIZE = 0.5; // meters
@@ -91,6 +94,8 @@ export default function App() {
   const connectorToolRef = useRef<ConnectorType | null>(null);
   const connectorStartRef = useRef<SnapResult | null>(null);
   const overlayRef = useRef<DrawOverlay | null>(null);
+  // Dragging an endpoint of an already-selected connector.
+  const endpointDragRef = useRef<{ id: string; end: "a" | "b" } | null>(null);
 
   const [ready, setReady] = useState(false);
   const [state, setState] = useState<ClockState>("build");
@@ -228,6 +233,23 @@ export default function App() {
       }
     }
 
+    // An endpoint handle of the selected connector takes priority too.
+    const selConn = selectedRef.current ? connById(selectedRef.current) : null;
+    if (selConn) {
+      const tol = ENDPOINT_PX / cameraRef.current.scale;
+      const near = (ep: typeof selConn.a) => {
+        const w = endpointWorld(sceneRef.current, 0, ep);
+        return w && Math.hypot(w.x - raw.x, w.y - raw.y) <= tol;
+      };
+      const end: "a" | "b" | null = near(selConn.a) ? "a" : near(selConn.b) ? "b" : null;
+      if (end) {
+        endpointDragRef.current = { id: selConn.id, end };
+        overlayRef.current = { snap: raw };
+        capture(canvasRef.current, e.pointerId);
+        return;
+      }
+    }
+
     // Else select+drag a body, else select a connector, else deselect.
     const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
     const hitBody = bodyAtPoint(sceneRef.current, 0, world);
@@ -252,6 +274,16 @@ export default function App() {
         preview: { a: connectorStartRef.current.world, b: end.world, type: connectorToolRef.current! },
         snap: end.world,
       };
+      return;
+    }
+
+    // Re-aim a connector endpoint, re-snapping as you drag.
+    if (endpointDragRef.current) {
+      const { id, end } = endpointDragRef.current;
+      const result = snapEndpoint(sceneRef.current, 0, raw, ANCHOR_PX / cameraRef.current.scale);
+      sceneRef.current = updateConnector(sceneRef.current, 0, id, { [end]: endpointOf(result) });
+      overlayRef.current = { snap: result.world };
+      bump();
       return;
     }
 
@@ -284,6 +316,10 @@ export default function App() {
       overlayRef.current = null;
       connectorToolRef.current = null;
       setConnectorTool(null);
+    }
+    if (endpointDragRef.current) {
+      endpointDragRef.current = null;
+      overlayRef.current = null;
     }
     dragOffsetRef.current = null;
     handleDragRef.current = null;
@@ -435,7 +471,7 @@ export default function App() {
           <button
             key={c.type}
             className={`palette-connector${connectorTool === c.type ? " active" : ""}`}
-            title={`Draw a ${c.label.toLowerCase()}: drag from one point to another`}
+            title={`${c.help}\n\nDraw it: drag from one point to another.`}
             disabled={!building}
             onClick={() => armConnector(c.type)}
           >
