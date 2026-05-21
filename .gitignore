@@ -1,0 +1,8 @@
+node_modules
+dist
+*.local
+.DS_Store
+*.tsbuildinfo
+
+# stray Chrome devtools-mcp cache accidentally written to a literal ~ path
+/~
