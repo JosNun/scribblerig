@@ -272,10 +272,10 @@ export default function App() {
         </span>
       </div>
 
-      {/* Drag ghost following the cursor */}
+      {/* Drag ghost following the cursor, sized to the body's true scale */}
       {ghost && (
         <div className="ghost" style={{ left: ghost.x, top: ghost.y }}>
-          <BodyPreview type={ghost.type} />
+          <BodyPreview type={ghost.type} scale={cameraRef.current.scale} />
         </div>
       )}
     </div>

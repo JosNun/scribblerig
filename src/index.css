@@ -136,4 +136,16 @@ body,
   transform: translate(-50%, -50%);
   pointer-events: none;
   opacity: 0.8;
+  animation: ghost-pop 140ms ease-out;
+}
+
+@keyframes ghost-pop {
+  from {
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0.3;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.8;
+  }
 }
