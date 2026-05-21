@@ -70,7 +70,14 @@ export default function App() {
   const [state, setState] = useState<ClockState>("build");
   const [snap, setSnap] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
-  const [ghost, setGhost] = useState<{ type: BodyType; x: number; y: number } | null>(null);
+  // `droppable` = the cursor is currently over open stage (a valid drop); when
+  // false (back over the palette/panels) the ghost animates out.
+  const [ghost, setGhost] = useState<{
+    type: BodyType;
+    x: number;
+    y: number;
+    droppable: boolean;
+  } | null>(null);
   // Bumped on scene-ref edits the UI must reflect (the canvas redraws from the
   // ref every frame regardless, but React panels need a nudge).
   const [, setRevision] = useState(0);
@@ -272,8 +279,14 @@ export default function App() {
     if (r && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) {
       draggedOffRef.current = true;
     }
-    // Only show the ghost once the drag has left the button.
-    setGhost(draggedOffRef.current ? { type: placingRef.current, x: e.clientX, y: e.clientY } : null);
+    // Show the ghost once the drag has left the button; it stays mounted while
+    // dragging and animates in/out as the cursor enters/leaves the stage.
+    if (!draggedOffRef.current) {
+      setGhost(null);
+      return;
+    }
+    const droppable = document.elementFromPoint(e.clientX, e.clientY) === canvasRef.current;
+    setGhost({ type: placingRef.current, x: e.clientX, y: e.clientY, droppable });
   };
   const onPaletteUp = (e: React.PointerEvent) => {
     const type = placingRef.current;
@@ -349,9 +362,13 @@ export default function App() {
         <PropertyPanel body={selectedBody} onChange={onPropChange} />
       )}
 
-      {/* Drag ghost following the cursor, sized to the body's true scale */}
+      {/* Drag ghost following the cursor, sized to the body's true scale.
+          Shrinks/fades out when it's not over a droppable area. */}
       {ghost && (
-        <div className="ghost" style={{ left: ghost.x, top: ghost.y }}>
+        <div
+          className={`ghost${ghost.droppable ? "" : " leaving"}`}
+          style={{ left: ghost.x, top: ghost.y }}
+        >
           <BodyPreview type={ghost.type} scale={cameraRef.current.scale} />
         </div>
       )}

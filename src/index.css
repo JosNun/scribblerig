@@ -177,23 +177,18 @@ body,
   gap: 8px;
 }
 
-/* Drag ghost following the cursor */
+/* Drag ghost following the cursor. Scale/opacity are transitioned so it pops
+   in over the stage and shrinks away when dragged back over a panel. */
 .ghost {
   position: fixed;
   z-index: 50;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 0.85;
   pointer-events: none;
-  opacity: 0.8;
-  animation: ghost-pop 140ms ease-out;
+  transition: transform 130ms ease, opacity 130ms ease;
 }
 
-@keyframes ghost-pop {
-  from {
-    transform: translate(-50%, -50%) scale(0.4);
-    opacity: 0.3;
-  }
-  to {
-    transform: translate(-50%, -50%) scale(1);
-    opacity: 0.8;
-  }
+.ghost.leaving {
+  transform: translate(-50%, -50%) scale(0.2);
+  opacity: 0;
 }
