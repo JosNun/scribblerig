@@ -184,6 +184,27 @@ body,
   gap: 8px;
 }
 
+.prop-row.dial-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.dial {
+  cursor: grab;
+  touch-action: none;
+}
+
+.dial:active {
+  cursor: grabbing;
+}
+
+.dial.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 /* Drag ghost following the cursor. Scale/opacity are transitioned so it pops
    in over the stage and shrinks away when dragged back over a panel. */
 .ghost {

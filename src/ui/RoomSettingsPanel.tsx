@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { RoomSettings, Vec2 } from "../scene/scene";
+import { DirectionDial } from "./DirectionDial";
 
 const RAD = Math.PI / 180;
 type WallKey = keyof RoomSettings["walls"];
@@ -57,19 +58,15 @@ export function RoomSettingsPanel({
         <span className="prop-val">{strength.toFixed(1)}</span>
       </label>
 
-      <label className="prop-row">
+      <div className="prop-row dial-row">
         <span className="prop-label">Direction</span>
-        <input
-          type="range"
-          min={0}
-          max={359}
-          step={1}
-          value={angle}
+        <DirectionDial
+          angle={angle}
           disabled={strength < 1e-6}
-          onChange={(e) => applyGravity(strength, parseFloat(e.target.value))}
+          onChange={(deg) => applyGravity(strength, deg)}
         />
         <span className="prop-val">{Math.round(angle)}°</span>
-      </label>
+      </div>
 
       <div className="prop-subtitle">Walls</div>
       {WALLS.map((k) => (

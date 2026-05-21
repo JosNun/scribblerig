@@ -25,6 +25,12 @@ before implementation (hence `needs-triage`). Some directions to evaluate:
   dial, a 2D vector pad (useful for room gravity in issue 04), an enum/segmented
   control, a color/material swatch.
 
+Precedent already in the codebase: `src/ui/DirectionDial.tsx` is a spinnable
+radial control used for gravity direction in the room panel. It's a good model
+for the "show the value, don't make the user read a number" direction — this
+issue would bring that quality to the rest of the controls (and ideally fold a
+dial-like `kind` into the schema so it's reusable).
+
 ## Open questions (resolve in triage)
 
 - What's the target control set, and which properties use which?
