@@ -1,6 +1,6 @@
 # 11 — Configurable connector collision (connected bodies)
 
-Status: needs-triage
+Status: done
 
 ## Parent
 
@@ -36,12 +36,27 @@ want the joined bodies to still collide (a ball bouncing on a sprung platform).
 - Does enabling contacts on a pin reintroduce the "fighting at the pivot" problem
   the PRD warned about? (Probably yes — keep pin default off.)
 
-## Acceptance criteria (draft)
+## Acceptance criteria
 
-- [ ] A connector can be set to keep or drop collision between its two bodies, and
+- [x] A connector can be set to keep or drop collision between its two bodies, and
       the simulation honours it.
-- [ ] Sensible per-type defaults; rest-length behaviour is no longer surprising.
+- [x] Sensible per-type defaults; rest-length behaviour is no longer surprising.
 
 ## Blocked by
 
 - `.scratch/physics-sandbox/issues/05-connector-framework-spring-weld-pin.md` (done)
+
+## Comments
+
+### 2026-05-21 — Implemented
+
+58 tests. Added a per-connector `collide` boolean prop (registry defaults: spring
+**on**, pin/weld **off**) surfaced as a "Bodies collide" toggle in the property
+panel. `sim` wires it to `joint.setContactsEnabled(props.collide === true)`.
+Sim test verifies two hard-sprung balls can't overlap when collide is on but pass
+through when off. ADR-0007 updated to note the deliberate deviation from the PRD's
+blanket `collideConnected = false`.
+
+Verified in-browser: a ball sprung to a platform now rests **on** it (spring
+compresses) instead of burying itself through it. Confirmed the toggle appears in
+the Spring panel, checked by default.

@@ -154,8 +154,9 @@ function compileConnector(
   }
 
   const joint = world.createImpulseJoint(jointData, hostA.rb, hostB.rb, true);
-  // Bodies joined by a connector don't collide with each other at the joint.
-  (joint as RAPIER.ImpulseJoint).setContactsEnabled(false);
+  // Whether the two joined bodies collide with each other is per-connector
+  // (spring defaults on; pin/weld off so overlapping parts don't fight).
+  (joint as RAPIER.ImpulseJoint).setContactsEnabled(props.collide === true);
 }
 
 function endHost(

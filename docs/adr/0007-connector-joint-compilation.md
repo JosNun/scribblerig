@@ -38,8 +38,13 @@ compiles them after all bodies exist, iterating in array order (determinism).
   frame `rotA − rotB` locks the bodies in their **current** relative pose, so a
   weld fuses two platforms where they sit rather than snapping them to a shared
   orientation.
-- Every joint sets `contactsEnabled = false`, so joined bodies don't fight at
-  the joint (`collideConnected = false`).
+- Whether the two joined bodies collide with each other is a **per-connector
+  `collide` prop** wired to `joint.setContactsEnabled(...)`. Defaults: spring
+  **on**, pin/weld **off**. Pins/welds join overlapping parts, so contacts must
+  stay off there or the parts eject each other; a spring usually wants contacts
+  on (a ball rests *on* a sprung platform instead of passing through it). This is
+  a deliberate, documented relaxation of the PRD's blanket `collideConnected =
+  false` default. (Issue 11.)
 - Deleting a body also removes connectors that referenced it
   (`removeBodyAndConnectors`), so no joint dangles to a missing body.
 

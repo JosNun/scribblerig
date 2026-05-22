@@ -255,4 +255,32 @@ describe("connectors compile to joints", () => {
     expect(distTo(ta, tb.position.x, tb.position.y)).toBeLessThan(startGap);
     world.free();
   });
+
+  it("honours the connector's collide flag between the two joined bodies", () => {
+    // Two unit-diameter balls (radius 0.5) hard-sprung toward rest length 0.3,
+    // in zero gravity. Apart they want to reach 0.3, but if they collide they
+    // can't get closer than ~1.0 (touching).
+    const build = (collide: boolean) => {
+      let scene = updateRoomSettings(createScene(), 0, { gravity: { x: 0, y: 0 } });
+      const a = addBody(scene, 0, makeBody("ball", { x: -2, y: 6 }));
+      scene = a.scene;
+      const b = addBody(scene, 0, makeBody("ball", { x: 2, y: 6 }));
+      scene = b.scene;
+      scene = addConnector(scene, 0, {
+        type: "spring",
+        a: { body: a.id, local: { x: 0, y: 0 } },
+        b: { body: b.id, local: { x: 0, y: 0 } },
+        props: { stiffness: 300, restLength: 0.3, damping: 2, collide },
+      }).scene;
+      const world = compile(scene);
+      for (let i = 0; i < 120; i++) world.step();
+      const t = world.readTransforms();
+      const gap = distTo(t.get(a.id)!, t.get(b.id)!.position.x, t.get(b.id)!.position.y);
+      world.free();
+      return gap;
+    };
+
+    expect(build(true)).toBeGreaterThan(0.9); // collide → can't overlap (touch ~1.0)
+    expect(build(false)).toBeLessThan(0.6); // no collision → reaches near rest length
+  });
 });
