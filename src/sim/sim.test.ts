@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { initSim, compile } from "./sim";
+import { initSim, compile, weldComponents } from "./sim";
 import {
   createScene,
   addBody,
@@ -11,6 +11,66 @@ import { makeBody } from "../registry/registry";
 
 beforeAll(async () => {
   await initSim();
+});
+
+describe("weldComponents (compound grouping)", () => {
+  const weld = (a: string, b: string) => ({
+    type: "weld" as const,
+    a: { body: a, local: { x: 0, y: 0 } },
+    b: { body: b, local: { x: 0, y: 0 } },
+    props: {},
+  });
+
+  it("groups each body alone when there are no welds", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 1, y: 0 })); s = b.scene;
+    expect(weldComponents(s.rooms[0].bodies, s.rooms[0].connectors)).toEqual([[a.id], [b.id]]);
+  });
+
+  it("merges two welded bodies into one component, leaving others alone", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 1, y: 0 })); s = b.scene;
+    const c = addBody(s, 0, makeBody("ball", { x: 5, y: 0 })); s = c.scene;
+    s = addConnector(s, 0, weld(a.id, b.id)).scene;
+    expect(weldComponents(s.rooms[0].bodies, s.rooms[0].connectors)).toEqual([[a.id, b.id], [c.id]]);
+  });
+
+  it("transitively merges a weld chain into one component", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 1, y: 0 })); s = b.scene;
+    const c = addBody(s, 0, makeBody("ball", { x: 2, y: 0 })); s = c.scene;
+    s = addConnector(s, 0, weld(a.id, b.id)).scene;
+    s = addConnector(s, 0, weld(b.id, c.id)).scene;
+    expect(weldComponents(s.rooms[0].bodies, s.rooms[0].connectors)).toEqual([[a.id, b.id, c.id]]);
+  });
+
+  it("does not merge a weld anchored to a world point (single body)", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 })); s = a.scene;
+    s = addConnector(s, 0, {
+      type: "weld",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 0 } },
+      props: {},
+    }).scene;
+    expect(weldComponents(s.rooms[0].bodies, s.rooms[0].connectors)).toEqual([[a.id]]);
+  });
+
+  it("only welds merge — a pin between bodies leaves them separate", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 1, y: 0 })); s = b.scene;
+    s = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { body: b.id, local: { x: 0, y: 0 } },
+      props: {},
+    }).scene;
+    expect(weldComponents(s.rooms[0].bodies, s.rooms[0].connectors)).toEqual([[a.id], [b.id]]);
+  });
 });
 
 describe("compile (structural)", () => {
@@ -231,6 +291,85 @@ describe("connectors compile to joints", () => {
     world.free();
   });
 
+  it("welds a stack of three into one rigid body that falls together (issue 23)", () => {
+    const weld = (x: string, y: string) => ({
+      type: "weld" as const,
+      a: { body: x, local: { x: 0, y: 0 } },
+      b: { body: y, local: { x: 0, y: 0 } },
+      props: {},
+    });
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 6 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 0, y: 7 })); s = b.scene;
+    const c = addBody(s, 0, makeBody("ball", { x: 0, y: 8 })); s = c.scene;
+    s = addConnector(s, 0, weld(a.id, b.id)).scene; // chain a–b–c → one compound
+    s = addConnector(s, 0, weld(b.id, c.id)).scene;
+
+    const world = compile(s);
+    for (let i = 0; i < 60; i++) world.step();
+    const ta = world.readTransforms().get(a.id)!;
+    const tb = world.readTransforms().get(b.id)!;
+    const tc = world.readTransforms().get(c.id)!;
+
+    expect(ta.position.y).toBeLessThan(6); // fell
+    // The 0/1/2 vertical stacking is held exactly (rigid), and stays aligned.
+    expect(tb.position.y - ta.position.y).toBeCloseTo(1, 3);
+    expect(tc.position.y - ta.position.y).toBeCloseTo(2, 3);
+    expect(Math.abs(tb.position.x - ta.position.x)).toBeLessThan(1e-3);
+    world.free();
+  });
+
+  it("anchors the whole cluster in place when one welded member is static (issue 23)", () => {
+    let s = createScene();
+    const plat = addBody(s, 0, { ...makeBody("platform", { x: 0, y: 3 }), props: { width: 3, height: 0.4, friction: 0.6, static: true } });
+    s = plat.scene;
+    const ball = addBody(s, 0, makeBody("ball", { x: 0, y: 3.5 })); s = ball.scene;
+    s = addConnector(s, 0, {
+      type: "weld",
+      a: { body: plat.id, local: { x: 0, y: 0 } },
+      b: { body: ball.id, local: { x: 0, y: 0 } },
+      props: {},
+    }).scene;
+
+    const world = compile(s);
+    for (let i = 0; i < 120; i++) world.step();
+    const t = world.readTransforms();
+    // A static member fixes the compound: neither body moves.
+    expect(t.get(plat.id)!.position.y).toBeCloseTo(3, 5);
+    expect(t.get(ball.id)!.position.y).toBeCloseTo(3.5, 5);
+    world.free();
+  });
+
+  it("places a rotated welded member at its correct world pose (issue 23)", () => {
+    let s = createScene();
+    const base = addBody(s, 0, { ...makeBody("platform", { x: 0, y: 6 }), props: { width: 3, height: 0.4, friction: 0.6, static: false } });
+    s = base.scene;
+    const arm = addBody(s, 0, { ...makeBody("platform", { x: 2, y: 6 }), rotation: Math.PI / 2, props: { width: 3, height: 0.4, friction: 0.6, static: false } });
+    s = arm.scene;
+    s = addConnector(s, 0, {
+      type: "weld",
+      a: { body: base.id, local: { x: 0, y: 0 } },
+      b: { body: arm.id, local: { x: 0, y: 0 } },
+      props: {},
+    }).scene;
+
+    const world = compile(s);
+    // Right after compile (no steps): each member sits at its design pose,
+    // confirming the compound frame + offset math.
+    const t0 = world.readTransforms();
+    expect(t0.get(arm.id)!.position.x).toBeCloseTo(2, 5);
+    expect(t0.get(arm.id)!.position.y).toBeCloseTo(6, 5);
+    expect(t0.get(arm.id)!.rotation).toBeCloseTo(Math.PI / 2, 5);
+    expect(t0.get(base.id)!.rotation).toBeCloseTo(0, 5);
+
+    // After falling, the 90° relative rotation is still held.
+    for (let i = 0; i < 30; i++) world.step();
+    const t = world.readTransforms();
+    const dr = t.get(arm.id)!.rotation - t.get(base.id)!.rotation;
+    expect(Math.atan2(Math.sin(dr), Math.cos(dr))).toBeCloseTo(Math.PI / 2, 3);
+    world.free();
+  });
+
   it("a spring pulls two bodies toward its rest length", () => {
     let scene = createScene();
     scene = updateRoomSettings(scene, 0, { gravity: { x: 0, y: 0 } }); // isolate the spring
@@ -365,6 +504,31 @@ describe("motor connector", () => {
     world.setMotor(connId, { speed: 8, torque: 20, reverse: false });
     for (let i = 0; i < 120; i++) world.step();
     expect(angVel(world, id)).toBeCloseTo(8, 0);
+    world.free();
+  });
+
+  it("drives a body about a static mount (motor between two bodies, issue 23)", () => {
+    // The wheel-on-a-static-platform case the stack 'bottom = stator' rule keeps
+    // working: a motor between a ball and a static platform spins the ball about
+    // the pivot while the platform stays put.
+    let s = createScene();
+    const plat = addBody(s, 0, { ...makeBody("platform", { x: 6, y: 6 }), props: { width: 3, height: 0.4, friction: 0.6, static: true } });
+    s = plat.scene;
+    const ball = addBody(s, 0, makeBody("ball", { x: 6, y: 6 })); s = ball.scene;
+    s = addConnector(s, 0, {
+      type: "motor",
+      a: { body: ball.id, local: { x: 0, y: 0 } },
+      b: { body: plat.id, local: { x: 0, y: 0 } },
+      props: { speed: 6, torque: 20, reverse: false },
+    }).scene;
+
+    const world = compile(s);
+    for (let i = 0; i < 120; i++) world.step();
+    // The static platform never moves; the ball spins and stays at the pivot.
+    expect(world.readTransforms().get(plat.id)!.position.y).toBeCloseTo(6, 5);
+    expect(Math.abs(angVel(world, ball.id))).toBeGreaterThan(3);
+    const p = world.readTransforms().get(ball.id)!.position;
+    expect(Math.hypot(p.x - 6, p.y - 6)).toBeLessThan(0.3);
     world.free();
   });
 });

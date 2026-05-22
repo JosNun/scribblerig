@@ -41,10 +41,14 @@ between welded members, and no collision groups anywhere in the feature.**
   `propSchema` are empty), so every weld between two bodies merges. A weld to a
   fixed **world point** (a single body) is not a merge; it stays a joint/anchor as
   in ADR-0007.
-- **Motor** through a stack uses the same compound as the **rotor**, plus a
-  velocity-driven revolute to a world anchor: the whole assembly spins as one rigid
-  piece about the pivot. (The point passes through every stacked body, so there is
-  no body left to be the stator — it drives against the world.)
+- **Motor** through a stack treats the **deepest** body the point passes through as
+  the **stator**: the bodies above it weld into a rigid **rotor** (the same compound
+  machinery), and the motor drives that rotor about the pivot **relative to the
+  stator**. With two bodies this is just today's motor between them (no regression);
+  to spin a multi-part assembly about a fixed axis, make the bottom body static. An
+  earlier draft drove the rotor against the *world* instead, but that fixed the whole
+  cluster whenever the stack included a static mount — breaking the common
+  wheel-on-a-static-platform motor — so the deepest body is the stator instead.
 - **Pin** does *not* merge: a hinge must let its bodies rotate independently.
   Instead it creates an **all-pairs revolute** at the shared point, reusing the
   existing contacts-disabled behaviour to keep the members from clashing. This is

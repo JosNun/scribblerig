@@ -1,6 +1,6 @@
 # 23 — A connector through a stack joins every body it passes through
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
@@ -46,13 +46,15 @@ mechanisms:
     compound body has no internal contacts anyway. So **every weld merges**;
     there is no "weld set to collide" fallback to handle.
 
-- **Motor → compound rotor, driven vs. the world.** A motor through a stack welds
-  the members into one rigid rotor (the same compound machinery) and drives that
-  rotor about the pivot. Because the point passes through *all* the stacked
-  bodies, there is no body left to be the stator, so it spins relative to the
-  **world** — a fixed axle in space, the whole assembly turning as one piece.
-  (Driving a stack relative to a base is naturally the existing two-body motor:
-  the case where the pivot does *not* pass through the base.)
+- **Motor → rotor driven relative to the deepest body (the stator).** A motor
+  through a stack treats the deepest body the point passes through as the
+  **stator**; the bodies above it weld into a rigid **rotor** (the same compound
+  machinery), and the motor drives that rotor about the pivot relative to the
+  stator. With two bodies this is exactly today's motor between them (no
+  regression); to spin a multi-part assembly about a fixed axis, make the bottom
+  body static. (Driving the rotor against the *world* instead would fix the whole
+  cluster whenever the stack contains a static mount — breaking the common
+  wheel-on-a-static-platform motor — so the deepest body is the stator.)
 
 - **Pin → all-pairs shared axle.** A pin must keep the bodies free to rotate
   independently, so it does **not** merge them. Instead, create a pin between
@@ -117,8 +119,9 @@ connect the component, so a fan or chain of weld connectors is sufficient
 - [ ] Only the bodies the point actually passes through are joined (matches
       `bodiesAtPoint`); a point through only some of a loose pile leaves the rest
       untouched.
-- [ ] A motor through a stack spins the whole stack as one rigid rotor about the
-      pivot.
+- [ ] A motor through a stack drives the bodies above the deepest one as a rigid
+      rotor about the pivot, relative to that deepest (stator) body; resting the
+      stack on a static base makes the rotor spin about a fixed axis.
 - [ ] A pin through a stack lets every body rotate freely about the shared pivot
       without the members clashing.
 - [ ] Welding any body to a static body anchors the whole cluster in place.

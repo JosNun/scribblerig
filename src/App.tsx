@@ -688,22 +688,55 @@ export default function App() {
   };
 
   /**
-   * Click-to-place a pin, weld, or motor through the point. Joins the top two
-   * bodies under the cursor at that shared point; if only one body is there,
-   * anchors it to a fixed world point (a pin pivots, a weld locks, a motor
-   * drives the body about that point).
+   * Click-to-place a pin, weld, or motor through the point — acting on **every**
+   * body the point passes through (issue 23), or anchoring a lone body to a
+   * fixed world point. A weld chains the whole stack into one rigid compound; a
+   * pin joins every pair so they share one axle without clashing; a motor treats
+   * the deepest body as the stator, welds the bodies above it into a rotor, and
+   * drives that rotor about the pivot relative to the stator.
    */
   const placeOverlap = (type: "pin" | "weld" | "motor", p: { x: number; y: number }) => {
-    const ids = bodiesAtPoint(sceneRef.current, 0, p);
+    const ids = bodiesAtPoint(sceneRef.current, 0, p); // topmost first … deepest last
     if (ids.length === 0) return;
-    const a = { body: ids[0], local: bodyToLocal(bodyById(ids[0])!, p) };
-    const b =
-      ids.length >= 2
-        ? { body: ids[1], local: bodyToLocal(bodyById(ids[1])!, p) }
-        : { world: { x: p.x, y: p.y } };
-    const added = addConnector(sceneRef.current, 0, makeConnector(type, a, b));
-    sceneRef.current = added.scene;
-    select(added.id);
+    const ep = (id: string) => ({ body: id, local: bodyToLocal(bodyById(id)!, p) });
+
+    // Lone body: anchor it to a fixed world point (pin pivots, weld locks, motor
+    // drives it about that point).
+    if (ids.length === 1) {
+      const added = addConnector(sceneRef.current, 0, makeConnector(type, ep(ids[0]), { world: { x: p.x, y: p.y } }));
+      sceneRef.current = added.scene;
+      select(added.id);
+      bump();
+      return;
+    }
+
+    // Multiple bodies under the point.
+    let scene = sceneRef.current;
+    let selectId = "";
+    const add = (t: ConnectorType, a: ReturnType<typeof ep>, b: ReturnType<typeof ep>) => {
+      const added = addConnector(scene, 0, makeConnector(t, a, b));
+      scene = added.scene;
+      if (!selectId) selectId = added.id;
+      return added.id;
+    };
+    if (type === "pin") {
+      // All-pairs pins at the shared point: one axle, members don't clash.
+      for (let i = 0; i < ids.length; i++)
+        for (let j = i + 1; j < ids.length; j++) add("pin", ep(ids[i]), ep(ids[j]));
+    } else if (type === "weld") {
+      // Chain the stack (n−1 welds) into a single rigid compound.
+      for (let i = 0; i + 1 < ids.length; i++) add("weld", ep(ids[i]), ep(ids[i + 1]));
+    } else {
+      // Motor: the deepest body is the stator; weld the bodies above it into a
+      // rotor (n−2 welds) and drive that rotor about the pivot relative to the
+      // stator. With two bodies this is just a plain motor between them.
+      const stator = ids[ids.length - 1];
+      const rotor = ids.slice(0, -1);
+      for (let i = 0; i + 1 < rotor.length; i++) add("weld", ep(rotor[i]), ep(rotor[i + 1]));
+      selectId = add("motor", ep(rotor[0]), ep(stator)); // select the motor itself
+    }
+    sceneRef.current = scene;
+    select(selectId);
     bump();
   };
 
