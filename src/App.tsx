@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Drawer } from "vaul";
 import {
-  tracerScene,
   addBody,
   updateBody,
   updateRoomSettings,
@@ -15,6 +14,7 @@ import {
   type ConnectorType,
   type RoomSettings,
 } from "./scene/scene";
+import { loadInitialScene, hasSharedScene, saveScene, shareUrl } from "./share/storage";
 import { createClock, type Clock, type ClockState } from "./clock/clock";
 import { initSim, compile, type SimWorld, type BodyTransform } from "./sim/sim";
 import { type Camera, fitCamera, screenToWorld, zoomAt, panBy } from "./renderer/camera";
@@ -96,7 +96,7 @@ export default function App() {
   const clockRef = useRef<Clock>(createClock(FIXED_DT));
   const worldRef = useRef<SimWorld | null>(null);
 
-  const sceneRef = useRef<Scene>(tracerScene());
+  const sceneRef = useRef<Scene>(loadInitialScene());
   const selectedRef = useRef<string | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const handleDragRef = useRef<HandleId | null>(null);
@@ -133,8 +133,9 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [connectorTool, setConnectorTool] = useState<ConnectorType | null>(null);
   const [ghost, setGhost] = useState<{ type: BodyType; x: number; y: number; droppable: boolean } | null>(null);
-  const [, setRevision] = useState(0);
+  const [revision, setRevision] = useState(0);
   const bump = () => setRevision((r) => r + 1);
+  const [copied, setCopied] = useState(false);
 
   // On narrow screens the panels collapse into a bottom sheet.
   const [mobile, setMobile] = useState(() =>
@@ -285,6 +286,18 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Autosave the design graph (debounced) so a refresh restores in-progress work.
+  useEffect(() => {
+    const t = setTimeout(() => saveScene(sceneRef.current), 500);
+    return () => clearTimeout(t);
+  }, [revision]);
+
+  // A shared scene was already imported on init; strip it from the URL so a
+  // later refresh restores the user's autosaved edits, not the original link.
+  useEffect(() => {
+    if (hasSharedScene()) history.replaceState(null, "", location.pathname + location.search);
   }, []);
 
   // ----- transport -----
@@ -581,6 +594,7 @@ export default function App() {
     const added = addConnector(sceneRef.current, 0, makeConnector(type, a, b));
     sceneRef.current = added.scene;
     select(added.id);
+    bump();
   };
 
   /** Create a drag-drawn connector (spring) from two snap results, unless degenerate. */
@@ -597,6 +611,7 @@ export default function App() {
     const added = addConnector(sceneRef.current, 0, conn);
     sceneRef.current = added.scene;
     select(added.id);
+    bump();
   };
 
   const onPropChange = (patch: Props) => {
@@ -626,6 +641,7 @@ export default function App() {
       ? removeBodyAndConnectors(sceneRef.current, 0, id)
       : removeConnector(sceneRef.current, 0, id);
     select(null);
+    bump();
   };
   const deleteSelectedRef = useRef(deleteSelected);
   deleteSelectedRef.current = deleteSelected;
@@ -687,6 +703,7 @@ export default function App() {
     });
     sceneRef.current = added.scene;
     select(added.id);
+    bump();
   };
 
   // Mobile palette drag-to-place. The strip scrolls horizontally (touch-action
@@ -734,6 +751,7 @@ export default function App() {
     });
     sceneRef.current = added.scene;
     select(added.id);
+    bump();
   };
   const onStripCancel = () => {
     mobileDragStartRef.current = null;
@@ -747,6 +765,19 @@ export default function App() {
     bump();
   };
   const toggleSnap = () => onRoomChange({ snap: !snapOn() });
+
+  // Copy a shareable link (the scene encoded in the URL fragment) to the
+  // clipboard, falling back to a prompt where clipboard access is blocked.
+  const copyLink = async () => {
+    const url = shareUrl(sceneRef.current);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  };
 
   // ----- shared panel fragments, rendered into either layout -----
   const paletteEls = (
@@ -827,6 +858,9 @@ export default function App() {
         <input type="checkbox" checked={snap} onChange={toggleSnap} disabled={!building} />
         Grid snap
       </label>
+      <button onClick={copyLink} title="Copy a shareable link to this build">
+        <Icon name="link" /> {copied ? "Copied!" : "Copy link"}
+      </button>
     </>
   );
 

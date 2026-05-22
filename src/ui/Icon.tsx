@@ -3,6 +3,7 @@ import pauseUrl from "../assets/icons/interface/pause.svg";
 import resetUrl from "../assets/icons/interface/square.svg";
 import fitUrl from "../assets/icons/interface/maximize.svg";
 import deleteUrl from "../assets/icons/interface/delete.svg";
+import linkUrl from "../assets/icons/interface/link.svg";
 
 // The icon SVGs ship with a hardcoded black fill, so we paint them as a CSS
 // mask over `currentColor` instead of dropping them in as <img>. That way they
@@ -15,6 +16,7 @@ const ICONS = {
   reset: resetUrl,
   fit: fitUrl,
   delete: deleteUrl,
+  link: linkUrl,
 } as const;
 
 export type IconName = keyof typeof ICONS;

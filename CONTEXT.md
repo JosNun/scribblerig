@@ -66,7 +66,8 @@ Pure modules carry the value and the tests; impure modules are thin shells.
 | Module        | Purity | Responsibility |
 | ------------- | ------ | -------------- |
 | `scene`       | pure   | Design-graph data structures + operations. Source of truth. |
-| `share-codec` | pure   | Scene ⇄ compressed URL string. *(not built yet — issue 08)* |
+| `share/codec` | pure   | Scene ⇄ compressed base64url string. **Decode is tolerant** — rebuilds a clean scene through the registry, dropping unknown types/props and default-filling the rest, so format changes degrade instead of breaking. See [ADR-0008](docs/adr/0008-tolerant-share-and-autosave.md). |
+| `share/storage` | impure | Browser glue: pick the startup scene (shared URL fragment → autosave → default), debounced localStorage autosave, and `shareUrl`. Thin shell over `share/codec`. |
 | `registry`    | data   | Per-type declarations for bodies *and connectors*: geometry (shape descriptors), anchors, defaults, prop schema, style. The extensibility seam. See [ADR-0006](docs/adr/0006-registry-geometry-descriptors.md). |
 | `snapping`    | pure   | Given a dragged endpoint + candidate anchors, choose the target: nearest named anchor (within threshold) → body point → fixed world point. Deterministic tie-break. |
 | `clock`       | pure   | Fixed-timestep accumulator + play/pause/reset state machine. |
