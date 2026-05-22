@@ -146,7 +146,7 @@ describe("room settings feed the simulation", () => {
 
   it("stops a body at an enabled side wall", () => {
     // Rightward gravity + a right wall: the ball can't leave the room (half
-    // width 8), so its center stays clear of the right boundary.
+    // width 6), so its center stays clear of the right boundary.
     let scene = tracerScene();
     scene = updateRoomSettings(scene, 0, {
       gravity: { x: 9.81, y: 0 },
@@ -160,7 +160,7 @@ describe("room settings feed the simulation", () => {
       world.step();
       maxX = Math.max(maxX, world.readTransforms().get(id)!.position.x);
     }
-    expect(maxX).toBeLessThan(8);
+    expect(maxX).toBeLessThan(6);
     world.free();
   });
 });
@@ -253,6 +253,39 @@ describe("connectors compile to joints", () => {
 
     // Rest length 1 < initial gap 4, so the spring contracts them closer.
     expect(distTo(ta, tb.position.x, tb.position.y)).toBeLessThan(startGap);
+    world.free();
+  });
+
+  it("a spring drawn from a dynamic body to a STATIC body still holds rest length", () => {
+    // Regression: Rapier only enforces a joint when a fixed body is body1, so a
+    // dynamic-then-fixed pair (the order you get drawing a spring *from* a ball
+    // *to* a static platform) used to collapse to ~0 instead of the rest length.
+    // `sim` now reorders the fixed body first.
+    let scene = updateRoomSettings(createScene(), 0, { gravity: { x: 0, y: 0 } });
+    const ball = addBody(scene, 0, makeBody("ball", { x: 0, y: 4 }));
+    scene = ball.scene;
+    const plat = addBody(scene, 0, {
+      ...makeBody("platform", { x: 0, y: 8 }),
+      props: { width: 3, height: 0.4, friction: 0.6, static: true },
+    });
+    scene = plat.scene;
+    // a = dynamic ball first, b = static platform second (the buggy order).
+    scene = addConnector(scene, 0, {
+      type: "spring",
+      a: { body: ball.id, local: { x: 0, y: 0 } },
+      b: { body: plat.id, local: { x: 0, y: 0 } },
+      props: { stiffness: 120, restLength: 3, damping: 4, collide: false },
+    }).scene;
+
+    const world = compile(scene);
+    for (let i = 0; i < 300; i++) world.step();
+    const t = world.readTransforms();
+    // The platform is static (never moves); the ball settles ~3m below it,
+    // not pulled all the way up to it.
+    expect(t.get(plat.id)!.position.y).toBeCloseTo(8, 5);
+    const gap = 8 - t.get(ball.id)!.position.y;
+    expect(gap).toBeGreaterThan(2.7);
+    expect(gap).toBeLessThan(3.3);
     world.free();
   });
 

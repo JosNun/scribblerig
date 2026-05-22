@@ -37,14 +37,27 @@ compiles them after all bodies exist, iterating in array order (determinism).
 - **weld** → `JointData.fixed(anchorA, 0, anchorB, rotA − rotB)`. The relative
   frame `rotA − rotB` locks the bodies in their **current** relative pose, so a
   weld fuses two platforms where they sit rather than snapping them to a shared
-  orientation.
-- Whether the two joined bodies collide with each other is a **per-connector
-  `collide` prop** wired to `joint.setContactsEnabled(...)`. Defaults: spring
-  **on**, pin/weld **off**. Pins/welds join overlapping parts, so contacts must
-  stay off there or the parts eject each other; a spring usually wants contacts
-  on (a ball rests *on* a sprung platform instead of passing through it). This is
-  a deliberate, documented relaxation of the PRD's blanket `collideConnected =
-  false` default. (Issue 11.)
+  orientation. Like a pin, a weld is **click-to-place**: click where two bodies
+  overlap to fuse them at that point (or click one body to lock it to a fixed
+  world point). Both join overlapping parts at a single shared point, so neither
+  needs a drag gesture spanning a gap — only the spring does.
+- Whether the two joined bodies collide with each other is a **`collide` prop on
+  the spring only**, wired to `joint.setContactsEnabled(...)` (default **on**: a
+  ball rests *on* a sprung platform instead of passing through it; turn off to
+  let them reach the rest length directly). Pins and welds always join
+  overlapping parts and so **never** collide — a weld is effectively one rigid
+  body, and a pinned hinge whose parts collided would eject itself — so they
+  carry no toggle and `sim` leaves their contacts disabled (`props.collide` is
+  absent, so `props.collide === true` is false). This is a deliberate,
+  documented relaxation of the PRD's blanket `collideConnected = false` default.
+  (Issue 11.)
+- **Body order**: Rapier only enforces a joint's constraint when a *fixed* body
+  is the joint's first body. A dynamic-then-fixed pair leaves a spring
+  unenforced — it collapses to ~0 length instead of holding its rest length
+  (drawing a spring *from* a dynamic body *to* a static one produced exactly
+  that order). So `compileConnector` puts the fixed body first when exactly one
+  endpoint is fixed, swapping both bodies and their anchors (which yields the
+  identical constraint).
 - Deleting a body also removes connectors that referenced it
   (`removeBodyAndConnectors`), so no joint dangles to a missing body.
 

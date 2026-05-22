@@ -38,7 +38,9 @@ synonyms.
   wheel center, rod ends). Connectors prefer-snap to nearby anchors.
 - **Wall / boundary** — floor/ceiling/left/right of a room. Static collision
   boundaries (bodies bounce off them), **not** special anchor targets. To pin at a
-  wall, place a fixed world-point endpoint there.
+  wall, place a fixed world-point endpoint there. Distinct from the **room frame**:
+  an always-drawn outline of the square play area (default 12×12 m) that bodies
+  are clamped inside (`editor.clampInsideRoom`), regardless of which walls collide.
 - **Build mode / Run mode** — Build edits the design graph (physics paused). Run
   steps a compiled simulation forward. Certain props (e.g. motor speed) are
   live-editable during Run.
@@ -50,6 +52,9 @@ synonyms.
   See [ADR-0003](docs/adr/0003-best-effort-determinism.md).
 - **World units** — meters (MKS), not pixels. Bodies sized ~0.1–10 units. The
   renderer's camera scales meters → pixels.
+- **Camera (view)** — pure meters→pixels transform with `scale` + origin
+  (`camera.ts`: `zoomAt`, `panBy`, `fitCamera`). Pan/zoomable (two-finger or
+  wheel/middle-drag), **local-only** — never serialized into the scene or URL.
 - **Drawable cache** — each shape's Rough.js drawable is generated **once** and
   cached; per frame only the canvas transform changes. Keeps the wobble from
   shimmering. See [ADR-0004](docs/adr/0004-roughjs-cached-drawables.md).

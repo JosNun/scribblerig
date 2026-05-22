@@ -18,6 +18,26 @@ export function createCamera(camera: Camera): Camera {
   return { ...camera };
 }
 
+/**
+ * Zoom by `factor` (>1 in, <1 out) about a fixed screen point — the world
+ * position under that pixel stays put, so the view zooms toward the cursor
+ * (or a pinch midpoint) rather than the origin.
+ */
+export function zoomAt(camera: Camera, screen: Vec2, factor: number): Camera {
+  const world = screenToWorld(camera, screen);
+  const scale = camera.scale * factor;
+  return {
+    scale,
+    originX: screen.x - world.x * scale,
+    originY: screen.y + world.y * scale,
+  };
+}
+
+/** Pan the view by a screen-pixel delta (zoom unchanged). */
+export function panBy(camera: Camera, dx: number, dy: number): Camera {
+  return { ...camera, originX: camera.originX + dx, originY: camera.originY + dy };
+}
+
 export function worldToScreen(camera: Camera, world: Vec2): Vec2 {
   return {
     x: camera.originX + world.x * camera.scale,

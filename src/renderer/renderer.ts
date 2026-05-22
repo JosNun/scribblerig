@@ -73,6 +73,7 @@ export function createRenderer(
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const room = scene.rooms[0];
 
+      drawRoomFrame(room.settings.size);
       drawWalls(room.settings.walls, room.settings.size);
 
       // Connectors under the bodies they join.
@@ -320,6 +321,26 @@ export function createRenderer(
     const h = shape.halfHeight * 2 * cam.scale;
     // Rough.rectangle takes the top-left corner; offset so it's centered.
     return rc.generator.rectangle(-w / 2, -h / 2, w, h, options);
+  }
+
+  /**
+   * The play-area boundary, drawn regardless of which walls collide, so the
+   * room reads as a defined space and matches where placement is clamped.
+   * World rect x ∈ [-w/2, w/2], y ∈ [0, h]; top-left in world is (-w/2, h).
+   */
+  function drawRoomFrame(size: { width: number; height: number }): void {
+    const w = size.width;
+    const h = size.height;
+    const topLeft = worldToScreen(cam, { x: -w / 2, y: h });
+    const drawable = cached(`frame:${w}x${h}`, () =>
+      rc.generator.rectangle(topLeft.x, topLeft.y, w * cam.scale, h * cam.scale, {
+        stroke: INK,
+        strokeWidth: 2.5,
+        roughness: 1.2,
+        seed: 7,
+      }),
+    );
+    rc.draw(drawable);
   }
 
   function drawWalls(

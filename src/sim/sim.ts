@@ -118,12 +118,24 @@ function compileConnector(
   bodies: Body[],
   handles: Map<string, RAPIER.RigidBody>,
 ): void {
-  const hostA = endHost(world, conn.a, bodies, handles);
-  const hostB = endHost(world, conn.b, bodies, handles);
+  let hostA = endHost(world, conn.a, bodies, handles);
+  let hostB = endHost(world, conn.b, bodies, handles);
   if (!hostA || !hostB) return; // a referenced body was deleted
 
-  const anchorA = anchorLocal(conn.a);
-  const anchorB = anchorLocal(conn.b);
+  let anchorA = anchorLocal(conn.a);
+  let anchorB = anchorLocal(conn.b);
+
+  // Rapier's joints (notably the spring) only enforce their constraint when a
+  // fixed body is the *first* body — a dynamic-then-fixed pair collapses to
+  // zero length instead of holding the rest length. Drawing a spring *from* a
+  // dynamic body *to* a static one produced exactly that order, so put the
+  // fixed body first. Swapping both bodies and their anchors yields the
+  // identical constraint.
+  if (!hostA.rb.isFixed() && hostB.rb.isFixed()) {
+    [hostA, hostB] = [hostB, hostA];
+    [anchorA, anchorB] = [anchorB, anchorA];
+  }
+
   const worldA = toWorld(hostA, anchorA);
   const worldB = toWorld(hostB, anchorB);
   const props = conn.props as Props;

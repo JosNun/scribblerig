@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createCamera, worldToScreen, screenToWorld, fitCamera } from "./camera";
+import { createCamera, worldToScreen, screenToWorld, fitCamera, zoomAt, panBy } from "./camera";
 
 describe("camera", () => {
   it("maps world meters to screen pixels and flips the y axis (world up = screen up)", () => {
@@ -41,5 +41,36 @@ describe("camera", () => {
     expect(cam.scale).toBeCloseTo(Math.min(1600 / 18, 900 / 11), 5);
     // The floor (y=0) sits inside the viewport, not on its bottom edge.
     expect(worldToScreen(cam, { x: 0, y: 0 }).y).toBeLessThan(900);
+  });
+});
+
+describe("zoomAt", () => {
+  it("keeps the world point under the cursor fixed while changing scale", () => {
+    const cam = createCamera({ scale: 50, originX: 400, originY: 450 });
+    const cursor = { x: 600, y: 200 };
+    const worldUnder = screenToWorld(cam, cursor);
+
+    const zoomed = zoomAt(cam, cursor, 2);
+
+    expect(zoomed.scale).toBe(100);
+    // The same world point still maps back to the same screen pixel.
+    const after = worldToScreen(zoomed, worldUnder);
+    expect(after.x).toBeCloseTo(cursor.x, 5);
+    expect(after.y).toBeCloseTo(cursor.y, 5);
+  });
+
+  it("zooms out with a factor below 1", () => {
+    const cam = createCamera({ scale: 50, originX: 400, originY: 450 });
+    expect(zoomAt(cam, { x: 0, y: 0 }, 0.5).scale).toBe(25);
+  });
+});
+
+describe("panBy", () => {
+  it("shifts the origin by the screen delta so the view tracks the drag", () => {
+    const cam = createCamera({ scale: 50, originX: 400, originY: 450 });
+    const panned = panBy(cam, 30, -20);
+    expect(panned.originX).toBe(430);
+    expect(panned.originY).toBe(430);
+    expect(panned.scale).toBe(50); // pan never changes zoom
   });
 });

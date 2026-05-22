@@ -79,7 +79,8 @@ export function defaultRoomSettings(): RoomSettings {
   return {
     gravity: { x: 0, y: -9.81 },
     walls: { floor: true, ceiling: false, left: false, right: false },
-    size: { width: 16, height: 9 },
+    // A square play area, framed on screen; the floor sits at y = 0.
+    size: { width: 12, height: 12 },
     snap: true,
   };
 }

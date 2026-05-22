@@ -7,6 +7,7 @@ import {
   handleAtPoint,
   applyResize,
   applyRotation,
+  clampInsideRoom,
 } from "./editor";
 import { createScene, addBody } from "../scene/scene";
 import { makeBody } from "../registry/registry";
@@ -107,5 +108,31 @@ describe("applyRotation", () => {
     const b = platform();
     expect(applyRotation(b, { x: 0, y: 1 })).toBeCloseTo(0, 5); // straight up
     expect(applyRotation(b, { x: 1, y: 0 })).toBeCloseTo(-Math.PI / 2, 5); // east
+  });
+});
+
+describe("clampInsideRoom", () => {
+  const size = { width: 12, height: 12 }; // x ∈ [-6, 6], y ∈ [0, 12]
+
+  it("leaves a position that is already inside untouched", () => {
+    const b = ball(); // radius 0.5
+    expect(clampInsideRoom(size, b, { x: 1, y: 5 })).toEqual({ x: 1, y: 5 });
+  });
+
+  it("pulls the body in so its whole extent stays within the room", () => {
+    const b = ball(); // radius 0.5 → center can't exceed 5.5
+    expect(clampInsideRoom(size, b, { x: 100, y: -100 })).toEqual({ x: 5.5, y: 0.5 });
+  });
+
+  it("accounts for a wide platform's half-width", () => {
+    const b = platform(); // width 3 → half-width 1.5, so x clamps to 4.5
+    expect(clampInsideRoom(size, b, { x: 10, y: 6 }).x).toBeCloseTo(4.5, 5);
+  });
+
+  it("uses the rotated bounding box for a turned platform", () => {
+    // A 3×0.4 platform rotated 90° is 0.4 wide and 3 tall in world axes,
+    // so its world half-width is ~0.2 and it can sit much closer to the wall.
+    const b = platform({ rotation: Math.PI / 2 });
+    expect(clampInsideRoom(size, b, { x: 10, y: 6 }).x).toBeCloseTo(6 - 0.2, 5);
   });
 });

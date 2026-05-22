@@ -173,14 +173,6 @@ export interface ConnectorTypeDef {
   help: string;
 }
 
-/** Shared "collide" field — whether the two joined bodies collide with each other. */
-const COLLIDE_FIELD: PropField = {
-  key: "collide",
-  label: "Bodies collide",
-  kind: "boolean",
-  help: "When on, the two connected bodies can bump into each other. Off lets them overlap — needed for pins/welds through overlapping parts.",
-};
-
 const SPRING: ConnectorTypeDef = {
   type: "spring",
   label: "Spring",
@@ -189,26 +181,33 @@ const SPRING: ConnectorTypeDef = {
     { key: "stiffness", label: "Stiffness", kind: "number", min: 1, max: 500, step: 1, help: "How strongly the spring pulls back to its rest length — stiffer is snappier." },
     { key: "restLength", label: "Rest length", kind: "number", min: 0.1, max: 12, step: 0.1, help: "The spring's natural length: it pulls in when stretched longer and pushes out when squeezed shorter." },
     { key: "damping", label: "Damping", kind: "number", min: 0, max: 50, step: 0.5, help: "How fast the bouncing dies down — higher damping settles sooner." },
-    COLLIDE_FIELD,
+    {
+      key: "collide",
+      label: "Bodies collide",
+      kind: "boolean",
+      help: "When on, the two connected bodies can bump into each other (a ball rests on a sprung platform). Off lets them pass through, reaching the rest length directly.",
+    },
   ],
   stroke: "#7a5b9b",
   help: "Springy elastic link: pulls two points toward a rest length. Use for bounce, suspension, or wobble.",
 };
 
+// Pins and welds always join overlapping parts, so their bodies never collide
+// (a weld is effectively one rigid body; a pinned hinge would fight itself).
 const WELD: ConnectorTypeDef = {
   type: "weld",
   label: "Weld",
-  defaults: { collide: false },
-  propSchema: [COLLIDE_FIELD],
+  defaults: {},
+  propSchema: [],
   stroke: "#b5651d",
-  help: "Rigidly fuses two bodies so they move as one. Use to build a bigger compound shape.",
+  help: "Rigidly fuses two bodies so they move as one. Click where two bodies overlap to weld them. Use to build a bigger compound shape.",
 };
 
 const PIN: ConnectorTypeDef = {
   type: "pin",
   label: "Pin",
-  defaults: { collide: false },
-  propSchema: [COLLIDE_FIELD],
+  defaults: {},
+  propSchema: [],
   stroke: "#2b2b2b",
   help: "A free-spinning hinge. Click where two bodies overlap to pin them together, or click one body to pin it to a fixed point. Use for pendulums, levers, and gears.",
 };

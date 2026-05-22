@@ -85,6 +85,34 @@ export function bodyToWorld(body: Body, local: Vec2): Vec2 {
   };
 }
 
+/**
+ * Clamp a body's center so its whole (rotation-aware) bounding box stays
+ * inside the room rectangle: x ∈ [-W/2, W/2], y ∈ [0, H]. Used to keep
+ * placement and dragging within the framed play area. If the body is larger
+ * than the room on an axis, it's centered on that axis.
+ */
+export function clampInsideRoom(
+  size: { width: number; height: number },
+  body: Pick<Body, "type" | "props" | "rotation">,
+  position: Vec2,
+): Vec2 {
+  const { hw, hh } = halfExtents(body as Body);
+  const c = Math.abs(Math.cos(body.rotation));
+  const s = Math.abs(Math.sin(body.rotation));
+  const ax = hw * c + hh * s; // world-axis half-width of the rotated box
+  const ay = hw * s + hh * c; // world-axis half-height
+  return {
+    x: clampRange(position.x, -size.width / 2 + ax, size.width / 2 - ax),
+    y: clampRange(position.y, ay, size.height - ay),
+  };
+}
+
+/** Clamp `v` to [lo, hi]; if the interval is empty (body too big), return its midpoint. */
+function clampRange(v: number, lo: number, hi: number): number {
+  if (lo > hi) return (lo + hi) / 2;
+  return Math.min(hi, Math.max(lo, v));
+}
+
 // ----- on-canvas resize / rotate handles -----
 
 export type HandleId = "rotate" | "nw" | "ne" | "se" | "sw" | "radius";
