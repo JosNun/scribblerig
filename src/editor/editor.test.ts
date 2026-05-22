@@ -61,22 +61,22 @@ describe("bodyAtPoint", () => {
 
 describe("connectorsAtPoint", () => {
   it("returns every connector near the point, topmost (last-added) first", () => {
-    // A wheel at the origin with a motor pinned through its center, plus a
-    // spring from the wheel out to a separate point. Clicking the wheel center
+    // A ball at the origin with a motor pinned through its center, plus a
+    // spring from the ball out to a separate point. Clicking the ball center
     // is on the motor's pivot but away from the spring's span.
     let s = createScene();
-    const wheel = addBody(s, 0, makeBody("wheel", { x: 0, y: 0 }));
-    s = wheel.scene;
+    const ball = addBody(s, 0, makeBody("ball", { x: 0, y: 0 }));
+    s = ball.scene;
     const motor = addConnector(s, 0, {
       type: "motor",
-      a: { body: wheel.id, local: { x: 0, y: 0 } },
+      a: { body: ball.id, local: { x: 0, y: 0 } },
       b: { world: { x: 0, y: 0 } },
       props: {},
     });
     s = motor.scene;
     const spring = addConnector(s, 0, {
       type: "spring",
-      a: { body: wheel.id, local: { x: 0, y: 0 } },
+      a: { body: ball.id, local: { x: 0, y: 0 } },
       b: { world: { x: 5, y: 0 } },
       props: {},
     });

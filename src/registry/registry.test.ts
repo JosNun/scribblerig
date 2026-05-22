@@ -10,8 +10,8 @@ import {
 } from "./registry";
 
 describe("registry", () => {
-  it("offers ball, platform, and wheel as placeable body types", () => {
-    expect(bodyTypes().map((d) => d.type)).toEqual(["ball", "platform", "wheel"]);
+  it("offers ball and platform as placeable body types", () => {
+    expect(bodyTypes().map((d) => d.type)).toEqual(["ball", "platform"]);
   });
 
   it("makeBody stamps a body at a position with the type's default props", () => {
@@ -39,10 +39,7 @@ describe("registry", () => {
       expect.arrayContaining(["width", "height", "friction", "static"]),
     );
     expect(keys(def("ball"))).toEqual(
-      expect.arrayContaining(["radius", "restitution", "density"]),
-    );
-    expect(keys(def("wheel"))).toEqual(
-      expect.arrayContaining(["radius", "friction", "density"]),
+      expect.arrayContaining(["radius", "friction", "restitution", "density"]),
     );
   });
 
@@ -56,16 +53,14 @@ describe("registry", () => {
     }
   });
 
-  it("gives the wheel render-only spoke marks; ball and platform have none", () => {
-    expect(def("wheel").marks?.(def("wheel").defaults)?.length).toBeGreaterThan(0);
+  it("declares no render-only marks (the spinning hachure fill shows rotation)", () => {
     expect(def("ball").marks).toBeUndefined();
     expect(def("platform").marks).toBeUndefined();
   });
 
-  it("marks platforms static by default but balls and wheels dynamic", () => {
+  it("marks platforms static by default but balls dynamic", () => {
     expect(def("platform").isStatic(def("platform").defaults)).toBe(true);
     expect(def("ball").isStatic(def("ball").defaults)).toBe(false);
-    expect(def("wheel").isStatic(def("wheel").defaults)).toBe(false);
   });
 
   it("offers spring, motor, weld, and pin as connector types", () => {

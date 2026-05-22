@@ -19,8 +19,8 @@ export type Shape =
 
 /**
  * Render-only decoration in body-local coords (meters). Has no collision
- * geometry — e.g. a wheel's spokes, which make rotation visible but don't
- * affect physics. `sim` ignores marks; only `renderer` draws them.
+ * geometry — e.g. spokes or an orientation line that makes rotation visible but
+ * doesn't affect physics. `sim` ignores marks; only `renderer` draws them.
  */
 export type Mark = { kind: "line"; a: Vec2; b: Vec2 };
 
@@ -53,7 +53,7 @@ export interface BodyTypeDef {
   isStatic(props: Props): boolean;
   /** Collision + visual geometry in body-local coords, derived from props. */
   shapes(props: Props): Shape[];
-  /** Render-only decorations (no collision), e.g. wheel spokes. */
+  /** Render-only decorations (no collision), e.g. spokes or an orientation line. */
   marks?(props: Props): Mark[];
   /** Editable properties, rendered by the generic property panel. */
   propSchema: PropField[];
@@ -68,14 +68,19 @@ function n(props: Props, key: string, fallback: number): number {
   return typeof v === "number" ? v : fallback;
 }
 
+// One circular body covering both the old Ball and Wheel: any round thing can
+// roll (friction), bounce (restitution), and be driven by a motor.
 const BALL: BodyTypeDef = {
   type: "ball",
   label: "Ball",
-  defaults: { radius: 0.5, restitution: 0.7, density: 1 },
+  defaults: { radius: 0.5, friction: 0.5, restitution: 0.5, density: 1 },
   isStatic: () => false,
   shapes: (p) => [{ kind: "circle", radius: n(p, "radius", 0.5) }],
+  // No orientation mark needed: the hachure fill rotates with the body, so the
+  // ball's spin is already visible.
   propSchema: [
     { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1, help: "How big the ball is, in meters." },
+    { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05, help: "Grip — high friction lets it roll instead of slip." },
     { key: "restitution", label: "Bounciness", kind: "number", min: 0, max: 1, step: 0.05, help: "Energy kept on impact: 0 is a dead thud, 1 bounces back fully." },
     { key: "density", label: "Density", kind: "number", min: 0.1, max: 5, step: 0.1, help: "Mass per area — heavier balls are harder to push around." },
   ],
@@ -111,35 +116,11 @@ const PLATFORM: BodyTypeDef = {
   style: { fill: "#9b8466", fillStyle: "cross-hatch" },
 };
 
-const WHEEL: BodyTypeDef = {
-  type: "wheel",
-  label: "Wheel",
-  defaults: { radius: 0.6, friction: 0.8, density: 1 },
-  isStatic: () => false,
-  shapes: (p) => [{ kind: "circle", radius: n(p, "radius", 0.6) }],
-  // Crossed spokes so the wheel's rotation is visible as it spins.
-  marks: (p) => {
-    const r = n(p, "radius", 0.6);
-    return [
-      { kind: "line", a: { x: -r, y: 0 }, b: { x: r, y: 0 } },
-      { kind: "line", a: { x: 0, y: -r }, b: { x: 0, y: r } },
-    ];
-  },
-  propSchema: [
-    { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1, help: "How big the wheel is, in meters." },
-    { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05, help: "Grip — high friction lets the wheel roll instead of slip." },
-    { key: "density", label: "Density", kind: "number", min: 0.1, max: 5, step: 0.1, help: "Mass per area — heavier wheels carry more momentum." },
-  ],
-  anchors: () => [{ name: "center", local: { x: 0, y: 0 } }],
-  style: { fill: "#5b8fa3", fillStyle: "zigzag" },
-};
-
 /** Ordered registry; array order is the palette order and is deterministic. */
-const ORDER: BodyTypeDef[] = [BALL, PLATFORM, WHEEL];
+const ORDER: BodyTypeDef[] = [BALL, PLATFORM];
 const BY_TYPE: Record<BodyType, BodyTypeDef> = {
   ball: BALL,
   platform: PLATFORM,
-  wheel: WHEEL,
 };
 
 export function bodyTypes(): BodyTypeDef[] {

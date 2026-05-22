@@ -319,10 +319,10 @@ describe("connectors compile to joints", () => {
 });
 
 describe("motor connector", () => {
-  // A wheel pinned through its center to a fixed world point, driven by a motor.
+  // A ball pinned through its center to a fixed world point, driven by a motor.
   // Gravity acts through the pivot (no torque), so the only motion is the spin.
   const drive = (props: Record<string, number | boolean>) => {
-    const w = addBody(createScene(), 0, makeBody("wheel", { x: 6, y: 6 }));
+    const w = addBody(createScene(), 0, makeBody("ball", { x: 6, y: 6 }));
     const scene = addConnector(w.scene, 0, {
       type: "motor",
       a: { body: w.id, local: { x: 0, y: 0 } },

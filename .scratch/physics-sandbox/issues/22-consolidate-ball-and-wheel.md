@@ -1,6 +1,6 @@
 # 22 — Consolidate Ball and Wheel into one circular body
 
-Status: needs-triage
+Status: done
 
 ## Parent
 
@@ -65,6 +65,31 @@ here. (Revisit migration discipline once the app ships.)
       all from the one type.
 - [ ] No migration/alias code for `ball`/`wheel` (pre-ship breaking change);
       stale autosaves referencing them simply drop those bodies.
+
+## Decisions (triage) + outcome
+
+- **Name**: kept `Ball` (type `"ball"`, label "Ball") as the generic round body.
+- **Spin visibility**: **no mark at all**. The hachure fill rotates with the
+  body (the drawable is cached and the canvas is rotated when drawing), so the
+  ball's spin is already visible — the wheel's spokes / an orientation line are
+  redundant.
+- **Fill**: kept the ball's orange hachure.
+- **Defaults**: `radius 0.5`, `friction 0.5`, `bounciness 0.5`, `density 1`.
+
+## Comments
+
+### 2026-05-22 — Implemented
+
+Merged `Wheel` into `Ball`: removed the `WHEEL` registry def and the `"wheel"`
+`BodyType`; the `Ball` now carries radius, friction, bounciness, density. No
+orientation mark — the hachure fill rotates with the body, so spin is already
+visible (no spokes/line needed). No sim change — the collider already reads
+friction/restitution/density per body. No migration/back-compat (pre-ship
+breaking change); the codec's type-keyed sanitizer drops any stale `wheel`
+automatically. Updated tests across registry/editor/sim/sessions/codec/snapping
+(84 pass) and the prose in `CONTEXT.md` + `PRD.md`. Verified in-browser: one
+Ball palette tile, a plain hachure ball, and selecting it exposes
+Radius / Friction / Bounciness / Density.
 
 ## Notes
 

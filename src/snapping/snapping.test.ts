@@ -4,7 +4,7 @@ import { createScene, addBody, type Scene } from "../scene/scene";
 import { makeBody } from "../registry/registry";
 
 /** Build a scene from a list of [type, x, y] bodies, returning scene + ids. */
-function sceneWith(specs: Array<["ball" | "platform" | "wheel", number, number]>) {
+function sceneWith(specs: Array<["ball" | "platform", number, number]>) {
   let s: Scene = createScene();
   const ids: string[] = [];
   for (const [type, x, y] of specs) {

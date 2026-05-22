@@ -9,7 +9,7 @@
 
 export type Vec2 = { x: number; y: number };
 
-export type BodyType = "ball" | "platform" | "wheel";
+export type BodyType = "ball" | "platform";
 
 export interface Body {
   id: string;

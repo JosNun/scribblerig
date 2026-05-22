@@ -10,7 +10,7 @@ People who want to tinker with simple 2D physics — building little contraption
 
 ## Solution
 
-A single-page browser app where the user drops bodies (platforms, balls, wheels) onto a bounded **room**, connects them with connectors (springs, motors, rods, welds, pins), tweaks their properties, and hits **Play** to watch physics unfold — all rendered in a minimal, hand-drawn sketch style. The entire creation is encoded into a shareable URL: no account, no server, no persistence backend. A friend who opens the link sees the identical build and, because the simulation runs on a fixed timestep over a shared physics engine binary, will in practice see the same run play out.
+A single-page browser app where the user drops bodies (platforms, balls) onto a bounded **room**, connects them with connectors (springs, motors, rods, welds, pins), tweaks their properties, and hits **Play** to watch physics unfold — all rendered in a minimal, hand-drawn sketch style. The entire creation is encoded into a shareable URL: no account, no server, no persistence backend. A friend who opens the link sees the identical build and, because the simulation runs on a fixed timestep over a shared physics engine binary, will in practice see the same run play out.
 
 The app separates two concepts cleanly:
 - **Build mode** — physics paused; the user edits the *design* (placing, dragging, connecting, configuring).
@@ -22,7 +22,7 @@ The **design is the source of truth**; the running simulation is a disposable in
 
 1. As a tinkerer, I want to drop a platform onto the room, so that I have a surface to build on.
 2. As a tinkerer, I want to drop a ball into the room, so that I have something for gravity to act on.
-3. As a tinkerer, I want to drop a wheel, so that I can build rotating mechanisms.
+3. As a tinkerer, I want a ball to roll, bounce, and be driven by a motor (one circular body with friction, bounciness, and density), so that I can build rotating mechanisms without a separate wheel type.
 4. As a tinkerer, I want to drag a placed body to reposition it, so that I can arrange my contraption precisely.
 5. As a tinkerer, I want to rotate a placed body, so that I can angle platforms and ramps.
 6. As a tinkerer, I want to delete a placed body or connector, so that I can correct mistakes.
@@ -77,7 +77,7 @@ The core organizing principle is that the **design graph** (the serializable sce
 ### Scene model: bodies vs. connectors, organized into rooms
 
 The design graph distinguishes two categories of element:
-- **Bodies** — have mass and a collision shape (platform, ball, wheel). Placed directly on a room. **Bodies are the only things that collide.**
+- **Bodies** — have mass and a collision shape (platform, ball — the ball is one circular body covering both rolling wheels and bouncing balls). Placed directly on a room. **Bodies are the only things that collide.**
 - **Connectors** — constraints between two **endpoints** (spring, motor, rod, weld, pin). A connector is a joint, not a property of a single body, and **a connector has no collision geometry of its own** — e.g. a motor is purely a revolute joint plus torque; it cannot collide with anything, it just spins. Only the bodies attached to it have physics.
 
 **A connector endpoint is one of two things:**
@@ -86,7 +86,7 @@ The design graph distinguishes two categories of element:
 
 The world-point endpoint is what lets a connector ground to nothing — e.g. a motor floating in the middle of the room, mounted to no body, or a pendulum hung from a fixed point. There is no separate "anchor body" requirement; a static body is still a valid endpoint, just never a *required* one. **Walls/floor/ceiling are static collision boundaries** (bodies bounce off them) — they are not special anchor targets; to pin at a wall you place a fixed world point there.
 
-Bodies joined by a connector **do not collide with each other** by default (`collideConnected = false`), so a wheel pinned to a platform doesn't fight the platform at the pivot.
+Bodies joined by a connector **do not collide with each other** by default (`collideConnected = false`), so a ball pinned to a platform doesn't fight the platform at the pivot.
 
 The scene is organized as ordered collections:
 
@@ -103,7 +103,7 @@ For **v1, only a single room is built**, but the data model accommodates multipl
 
 ### Anchors and snapping
 
-- Each body type exposes a small set of **named anchor points** (e.g. a platform exposes its corners and center; a wheel exposes its center; a rod exposes both ends).
+- Each body type exposes a small set of **named anchor points** (e.g. a platform exposes its corners and center; a ball exposes its center; a rod exposes both ends).
 - A connector endpoint may bind to a named anchor, to an **arbitrary local point on a body** (e.g. a motor bolted anywhere along a platform, or a lever pinned mid-span), or to a **fixed world point**.
 - Connecting is done by dragging a connector endpoint: nearby named anchors highlight and take priority; otherwise the endpoint binds to the exact point on the body under the cursor, or to a fixed world point if released over empty space. The snap-target selection is pure geometry, owned by the **`snapping`** module.
 

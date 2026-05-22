@@ -26,8 +26,10 @@ synonyms.
 - **Room** — a bounded play area with its own `settings` (gravity, walls, size),
   `bodies[]`, and `connectors[]`. v1 builds a single room; the schema accommodates
   many (+ portals) for v2 without rework.
-- **Body** — has mass and a collision shape (ball, platform, wheel). **Bodies are
-  the only things that collide.** Placed directly on a room.
+- **Body** — has mass and a collision shape (ball, platform). **Bodies are
+  the only things that collide.** Placed directly on a room. (The ball is the
+  single circular body — radius, friction, bounciness, density — covering what
+  were once separate ball and wheel types.)
 - **Connector** — a constraint between two **endpoints** (spring, motor, rod, weld,
   pin). A joint, not a property of a body. **A connector has no collision geometry**
   — a motor just spins, it cannot collide.
@@ -35,7 +37,7 @@ synonyms.
   (`{body, localPoint}`) or a **fixed point in world space** (`{worldPoint}`). The
   world-point form lets a connector ground to nothing.
 - **Anchor** — a named attachment point a body type exposes (platform corners/center,
-  wheel center, rod ends). Connectors prefer-snap to nearby anchors.
+  ball center, rod ends). Connectors prefer-snap to nearby anchors.
 - **Wall / boundary** — floor/ceiling/left/right of a room. Static collision
   boundaries (bodies bounce off them), **not** special anchor targets. To pin at a
   wall, place a fixed world-point endpoint there. Distinct from the **room frame**:

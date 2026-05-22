@@ -18,19 +18,19 @@ function sampleScene(): Scene {
     size: { width: 10, height: 8 },
     snap: true,
   });
-  const wheel = addBody(s, 0, makeBody("wheel", { x: 2, y: 3 }));
-  s = wheel.scene;
+  const ball = addBody(s, 0, makeBody("ball", { x: 2, y: 3 }));
+  s = ball.scene;
   const platform = addBody(s, 0, makeBody("platform", { x: -1, y: 1 }));
   s = platform.scene;
   s = addConnector(
     s,
     0,
-    makeConnector("motor", { body: wheel.id, local: { x: 0, y: 0 } }, { world: { x: 2, y: 3 } }),
+    makeConnector("motor", { body: ball.id, local: { x: 0, y: 0 } }, { world: { x: 2, y: 3 } }),
   ).scene;
   s = addConnector(
     s,
     0,
-    makeConnector("spring", { body: wheel.id, local: { x: 0, y: 0 } }, { body: platform.id, local: { x: 0, y: 0 } }),
+    makeConnector("spring", { body: ball.id, local: { x: 0, y: 0 } }, { body: platform.id, local: { x: 0, y: 0 } }),
   ).scene;
   return s;
 }
@@ -82,7 +82,7 @@ describe("sanitizeScene (tolerant import)", () => {
               type: "ball",
               position: { x: 0, y: 1 },
               rotation: 0,
-              // radius valid; restitution wrong type; density missing; gloss unknown
+              // radius valid; restitution wrong type; friction/density missing; gloss unknown
               props: { radius: 0.9, restitution: "high", gloss: 7 },
             },
           ],
@@ -90,7 +90,12 @@ describe("sanitizeScene (tolerant import)", () => {
         },
       ],
     })!;
-    expect(out.rooms[0].bodies[0].props).toEqual({ radius: 0.9, restitution: 0.7, density: 1 });
+    expect(out.rooms[0].bodies[0].props).toEqual({
+      radius: 0.9,
+      friction: 0.5,
+      restitution: 0.5,
+      density: 1,
+    });
   });
 
   it("drops connectors whose endpoint references a missing/dropped body", () => {

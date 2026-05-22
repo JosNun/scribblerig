@@ -11,7 +11,7 @@ describe("deriveTitle", () => {
   it("counts bodies and connectors, pluralizing", () => {
     const one = addBody(createScene(), 0, makeBody("ball", { x: 0, y: 1 })).scene;
     expect(deriveTitle(one)).toBe("1 object");
-    const two = addBody(one, 0, makeBody("wheel", { x: 1, y: 1 })).scene;
+    const two = addBody(one, 0, makeBody("ball", { x: 1, y: 1 })).scene;
     expect(deriveTitle(two)).toBe("2 objects");
   });
 });
