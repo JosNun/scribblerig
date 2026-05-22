@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -24,7 +24,7 @@ This slice is independent of the editing/connector work and can run in parallel 
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/01-falling-ball-tracer-bullet.md`
+- `.scratch/scribblerig/issues/01-falling-ball-tracer-bullet.md`
 
 ## Comments
 

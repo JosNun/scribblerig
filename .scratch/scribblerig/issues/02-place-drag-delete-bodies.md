@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -27,7 +27,7 @@ Bodies placed here flow through the existing `sim`/`renderer`/`clock` from slice
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/01-falling-ball-tracer-bullet.md`
+- `.scratch/scribblerig/issues/01-falling-ball-tracer-bullet.md`
 
 ## Comments
 

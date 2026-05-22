@@ -4,7 +4,7 @@ Status: needs-triage
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -33,4 +33,4 @@ maybe only for the selected connector or on hover).
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/05-connector-framework-spring-weld-pin.md` (done)
+- `.scratch/scribblerig/issues/05-connector-framework-spring-weld-pin.md` (done)

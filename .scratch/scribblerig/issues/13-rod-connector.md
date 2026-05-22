@@ -4,7 +4,7 @@ Status: needs-triage
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -48,4 +48,4 @@ the developer sketched ("a stick where you set each end to spin or be anchored")
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/05-connector-framework-spring-weld-pin.md` (done)
+- `.scratch/scribblerig/issues/05-connector-framework-spring-weld-pin.md` (done)

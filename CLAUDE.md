@@ -1,4 +1,4 @@
-# physics-sandbox
+# ScribbleRig
 
 ## Agent skills
 

@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -27,8 +27,8 @@ Each viewer's browser re-simulates from the shared design graph; with the fixed 
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/04-room-settings.md`
-- `.scratch/physics-sandbox/issues/06-motor-connector-live-tuning.md`
+- `.scratch/scribblerig/issues/04-room-settings.md`
+- `.scratch/scribblerig/issues/06-motor-connector-live-tuning.md`
 
 ## Comments
 

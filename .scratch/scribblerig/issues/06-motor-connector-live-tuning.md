@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -25,7 +25,7 @@ A motor is a connector (revolute joint + torque), **not a body** — it has no c
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/05-connector-framework-spring-weld-pin.md`
+- `.scratch/scribblerig/issues/05-connector-framework-spring-weld-pin.md`
 
 ## Comments
 

@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## Problem
 
@@ -21,16 +21,16 @@ same build. We want **multiple tabs to hold different builds**, and a way to
   edge case: the duplicate shares the id.)
 - **Per-session scenes in `localStorage`**, plus an index so builds are listable
   and survive a browser restart:
-  - `physics-sandbox:scene:<id>` — the encoded scene (reuses the tolerant
+  - `scribblerig:scene:<id>` — the encoded scene (reuses the tolerant
     [codec](../../src/share/codec.ts)).
-  - `physics-sandbox:sessions` — index of `{ id, title, updatedAt }`.
-  - `physics-sandbox:sid` (sessionStorage) — this tab's id.
+  - `scribblerig:sessions` — index of `{ id, title, updatedAt }`.
+  - `scribblerig:sid` (sessionStorage) — this tab's id.
 - **New tab = resume the most-recent build as a *lazy fork*.** A fresh tab shows
   the most-recent build's content under a new id, but does **not** create a real
   session until the **first edit**. So glance-and-close tabs leave no clutter,
   edits never clobber the source build, and a reload keeps the tab's own session
   (via the `sessionStorage` id). With no prior builds it shows the default scene.
-- **Migration.** Fold the existing single `physics-sandbox:scene` autosave into a
+- **Migration.** Fold the existing single `scribblerig:scene` autosave into a
   first session so current work isn't lost.
 - **Shared links** open into their own (lazy) session; the imported `#…` is still
   stripped from the URL after load.
@@ -90,7 +90,7 @@ single-key autosave migrates into a session.
 
 Each build now saves a **thumbnail** alongside it: the scene rendered
 fit-to-room into a small offscreen canvas (transparent PNG, paper shows through
-via CSS), stored under its own `physics-sandbox:thumb:<id>` key. The Builds list
+via CSS), stored under its own `scribblerig:thumb:<id>` key. The Builds list
 shows it next to the name so a build is recognizable at a glance rather than by
 title alone. Verified in-browser: editing regenerates the preview and it renders
 in the list.

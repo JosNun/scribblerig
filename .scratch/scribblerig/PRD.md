@@ -1,8 +1,8 @@
-# PRD: Physics Sandbox
+# PRD: ScribbleRig
 
 Status: ready-for-agent
 
-A browser-based physics sandbox in the spirit of *The Incredible Machine*, with a hand-drawn doodle aesthetic and serverless sharing.
+ScribbleRig is a browser-based physics sandbox in the spirit of *The Incredible Machine*, with a hand-drawn doodle aesthetic and serverless sharing.
 
 ## Problem Statement
 

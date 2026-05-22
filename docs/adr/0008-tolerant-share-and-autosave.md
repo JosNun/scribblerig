@@ -66,13 +66,13 @@ A pure **`share/codec`** module and a thin impure **`share/storage`** shell.
 The single autosave key was generalized so **each browser tab holds its own
 build** and past builds are browsable.
 
-- **Tab identity in `sessionStorage`** (`physics-sandbox:sid`) — per-tab and
+- **Tab identity in `sessionStorage`** (`scribblerig:sid`) — per-tab and
   reload-stable; a fresh tab has none and mints one.
-- **Per-session scenes** under `physics-sandbox:scene:<id>`, plus a
-  `physics-sandbox:sessions` index of `{ id, title, updatedAt }`. The old single
-  `physics-sandbox:scene` key is migrated into a session on first boot. A
+- **Per-session scenes** under `scribblerig:scene:<id>`, plus a
+  `scribblerig:sessions` index of `{ id, title, updatedAt }`. The old single
+  `scribblerig:scene` key is migrated into a session on first boot. A
   **preview thumbnail** (the scene rendered fit-to-room into a small offscreen
-  canvas, transparent PNG) is saved under `physics-sandbox:thumb:<id>` — its own
+  canvas, transparent PNG) is saved under `scribblerig:thumb:<id>` — its own
   key so the index stays small and a thumbnail write hitting quota can't lose the
   build.
 - **`bootSession` precedence**: shared URL fragment (fresh session) → this tab's

@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -27,7 +27,7 @@ Property serialization comes for free from the schema, keeping the scene fully s
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/02-place-drag-delete-bodies.md`
+- `.scratch/scribblerig/issues/02-place-drag-delete-bodies.md`
 
 ## Comments
 

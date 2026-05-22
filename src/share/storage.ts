@@ -2,9 +2,9 @@
  * Browser glue over the pure {@link codec} and {@link sessions} logic. Owns the
  * localStorage/sessionStorage layout for per-tab sessions (issue 18):
  *
- * - `physics-sandbox:sid`     (sessionStorage) — this tab's session id;
- * - `physics-sandbox:scene:<id>` (localStorage) — each build's encoded scene;
- * - `physics-sandbox:sessions`   (localStorage) — the index of saved builds.
+ * - `scribblerig:sid`     (sessionStorage) — this tab's session id;
+ * - `scribblerig:scene:<id>` (localStorage) — each build's encoded scene;
+ * - `scribblerig:sessions`   (localStorage) — the index of saved builds.
  *
  * Kept impure and thin; the testable logic lives in `codec` and `sessions`.
  */
@@ -20,11 +20,11 @@ import {
 } from "./sessions";
 import { createScene, tracerScene, type Scene } from "../scene/scene";
 
-const SCENE_PREFIX = "physics-sandbox:scene:";
-const THUMB_PREFIX = "physics-sandbox:thumb:";
-const INDEX_KEY = "physics-sandbox:sessions";
-const SID_KEY = "physics-sandbox:sid";
-const LEGACY_KEY = "physics-sandbox:scene"; // single-key autosave from issue 08
+const SCENE_PREFIX = "scribblerig:scene:";
+const THUMB_PREFIX = "scribblerig:thumb:";
+const INDEX_KEY = "scribblerig:sessions";
+const SID_KEY = "scribblerig:sid";
+const LEGACY_KEY = "scribblerig:scene"; // single-key autosave from issue 08
 
 export interface SessionBoot {
   id: string;

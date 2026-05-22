@@ -4,7 +4,7 @@ Status: needs-triage
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -38,4 +38,4 @@ differing — e.g. a spring at stiffness 100 vs 200, or a ball at restitution 0.
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/03-configure-body-properties.md` (done)
+- `.scratch/scribblerig/issues/03-configure-body-properties.md` (done)

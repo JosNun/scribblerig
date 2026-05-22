@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -27,7 +27,7 @@ Settings live in `room.settings` and feed the `sim` compile step. The fixed room
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/02-place-drag-delete-bodies.md`
+- `.scratch/scribblerig/issues/02-place-drag-delete-bodies.md`
 
 ## Comments
 

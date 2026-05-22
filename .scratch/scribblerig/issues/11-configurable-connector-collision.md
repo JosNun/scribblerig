@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## Problem
 
@@ -44,7 +44,7 @@ want the joined bodies to still collide (a ball bouncing on a sprung platform).
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/05-connector-framework-spring-weld-pin.md` (done)
+- `.scratch/scribblerig/issues/05-connector-framework-spring-weld-pin.md` (done)
 
 ## Comments
 

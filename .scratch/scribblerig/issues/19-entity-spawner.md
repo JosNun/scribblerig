@@ -4,7 +4,7 @@ Status: needs-triage
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## Problem
 

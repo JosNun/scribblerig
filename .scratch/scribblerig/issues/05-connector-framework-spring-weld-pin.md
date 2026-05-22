@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -30,7 +30,7 @@ Connectors are **jointless constraints with no collision geometry** — only bod
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/03-configure-body-properties.md`
+- `.scratch/scribblerig/issues/03-configure-body-properties.md`
 
 ## Comments
 

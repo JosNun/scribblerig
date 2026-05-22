@@ -4,7 +4,7 @@ Status: needs-triage
 
 ## Parent
 
-`.scratch/physics-sandbox/PRD.md`
+`.scratch/scribblerig/PRD.md`
 
 ## What to build
 
@@ -50,4 +50,4 @@ dial-like `kind` into the schema so it's reusable).
 
 ## Blocked by
 
-- `.scratch/physics-sandbox/issues/03-configure-body-properties.md` (done)
+- `.scratch/scribblerig/issues/03-configure-body-properties.md` (done)
