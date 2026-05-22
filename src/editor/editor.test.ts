@@ -8,8 +8,9 @@ import {
   applyResize,
   applyRotation,
   clampInsideRoom,
+  connectorsAtPoint,
 } from "./editor";
-import { createScene, addBody } from "../scene/scene";
+import { createScene, addBody, addConnector } from "../scene/scene";
 import { makeBody } from "../registry/registry";
 import type { Body } from "../scene/scene";
 
@@ -55,6 +56,38 @@ describe("bodyAtPoint", () => {
     expect(bodyAtPoint(s, 0, { x: 1.3, y: 0 })).toBe(plat.id);
     // Point inside both: the later-added body (drawn on top) wins.
     expect(bodyAtPoint(s, 0, { x: 0, y: 0 })).toBe(ball.id);
+  });
+});
+
+describe("connectorsAtPoint", () => {
+  it("returns every connector near the point, topmost (last-added) first", () => {
+    // A wheel at the origin with a motor pinned through its center, plus a
+    // spring from the wheel out to a separate point. Clicking the wheel center
+    // is on the motor's pivot but away from the spring's span.
+    let s = createScene();
+    const wheel = addBody(s, 0, makeBody("wheel", { x: 0, y: 0 }));
+    s = wheel.scene;
+    const motor = addConnector(s, 0, {
+      type: "motor",
+      a: { body: wheel.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 0 } },
+      props: {},
+    });
+    s = motor.scene;
+    const spring = addConnector(s, 0, {
+      type: "spring",
+      a: { body: wheel.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 5, y: 0 } },
+      props: {},
+    });
+    s = spring.scene;
+
+    // The motor's pivot sits at the origin; the spring runs through it too.
+    expect(connectorsAtPoint(s, 0, { x: 0, y: 0 }, 0.2)).toEqual([spring.id, motor.id]);
+    // Out along the spring (away from the pivot) only the spring is near.
+    expect(connectorsAtPoint(s, 0, { x: 3, y: 0 }, 0.2)).toEqual([spring.id]);
+    // Off in empty space, nothing.
+    expect(connectorsAtPoint(s, 0, { x: 0, y: 5 }, 0.2)).toEqual([]);
   });
 });
 

@@ -237,6 +237,23 @@ export function connectorAtPoint(
   return null;
 }
 
+/** All connectors within `tol` of `point`, topmost (last-drawn) first. */
+export function connectorsAtPoint(
+  scene: Scene,
+  roomIndex: number,
+  point: Vec2,
+  tol: number,
+): string[] {
+  const conns = scene.rooms[roomIndex].connectors;
+  const hits: string[] = [];
+  for (let i = conns.length - 1; i >= 0; i--) {
+    const a = endpointWorld(scene, roomIndex, conns[i].a);
+    const b = endpointWorld(scene, roomIndex, conns[i].b);
+    if (a && b && distToSegment(point, a, b) <= tol) hits.push(conns[i].id);
+  }
+  return hits;
+}
+
 function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
   const dx = b.x - a.x;
   const dy = b.y - a.y;

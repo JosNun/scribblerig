@@ -30,10 +30,9 @@ import {
 } from "./registry/registry";
 import {
   snapToGrid,
-  bodyAtPoint,
   bodiesAtPoint,
   bodyToLocal,
-  connectorAtPoint,
+  connectorsAtPoint,
   endpointWorld,
   handleAtPoint,
   applyResize,
@@ -101,6 +100,12 @@ export default function App() {
   const selectedRef = useRef<string | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const handleDragRef = useRef<HandleId | null>(null);
+  // For click-cycling stacked objects: the pick list captured on pointerdown,
+  // what was selected, whether it was already selected, and the press point (to
+  // tell a click from a drag on pointerup).
+  const selectDownRef = useRef<
+    { picks: string[]; id: string; wasOnPick: boolean; x: number; y: number } | null
+  >(null);
   const placingRef = useRef<BodyType | null>(null);
   const paletteOriginRef = useRef<DOMRect | null>(null);
   const draggedOffRef = useRef(false);
@@ -269,9 +274,13 @@ export default function App() {
   }, []);
 
   // Delete/Backspace removes the selection; Escape cancels a connector draw.
+  // Skip Delete/Backspace while typing in a field, so editing a property value
+  // (e.g. backspacing in the width box) doesn't delete the selected object.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Delete" || e.key === "Backspace") deleteSelectedRef.current();
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+      if (!typing && (e.key === "Delete" || e.key === "Backspace")) deleteSelectedRef.current();
       else if (e.key === "Escape") cancelConnectorRef.current();
     };
     window.addEventListener("keydown", onKey);
@@ -348,6 +357,7 @@ export default function App() {
 
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     pointersRef.current.set(e.pointerId, pointerInCanvas(e));
+    selectDownRef.current = null; // only the select branch below re-arms cycling
     // A second finger starts a two-finger pan/pinch; abandon any single-finger edit.
     if (pointersRef.current.size >= 2) {
       cancelActiveEdit();
@@ -402,23 +412,49 @@ export default function App() {
       if (end) {
         endpointDragRef.current = { id: selConn.id, end };
         overlayRef.current = { snap: raw };
+        // A connector pinned at a body's center (e.g. a motor) puts its endpoint
+        // handle right over that body, so a plain click here would always re-aim
+        // and never reach the body. Arm cycling: a click (no drag) advances to
+        // the next stacked object; an actual drag still re-aims the endpoint.
+        const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
+        const picks = [
+          ...bodiesAtPoint(sceneRef.current, 0, world),
+          ...connectorsAtPoint(sceneRef.current, 0, raw, CONNECTOR_PX / cameraRef.current.scale),
+        ];
+        if (picks.length > 1) {
+          selectDownRef.current = { picks, id: selConn.id, wasOnPick: true, x: e.clientX, y: e.clientY };
+        }
         capture(canvasRef.current, e.pointerId);
         return;
       }
     }
 
-    // Else select+drag a body, else select a connector, else deselect.
+    // Else select whatever's under the point. Stacked objects (e.g. a motor
+    // hidden behind the wheel it spins) all become candidates, topmost first;
+    // a body can be dragged, and clicking again without moving cycles to the
+    // next layer (see the cycle-on-click in onCanvasPointerUp).
     const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
-    const hitBody = bodyAtPoint(sceneRef.current, 0, world);
-    if (hitBody) {
-      select(hitBody);
-      const body = bodyById(hitBody)!;
-      dragOffsetRef.current = { x: body.position.x - world.x, y: body.position.y - world.y };
-      capture(canvasRef.current, e.pointerId);
+    const tol = CONNECTOR_PX / cameraRef.current.scale;
+    const picks = [
+      ...bodiesAtPoint(sceneRef.current, 0, world),
+      ...connectorsAtPoint(sceneRef.current, 0, raw, tol),
+    ];
+    if (picks.length === 0) {
+      select(null);
       return;
     }
-    const hitConn = connectorAtPoint(sceneRef.current, 0, raw, CONNECTOR_PX / cameraRef.current.scale);
-    select(hitConn);
+    // Keep the current selection if it's under the point (so a drag moves it
+    // and a click advances the cycle); otherwise grab the topmost.
+    const cur = selectedRef.current;
+    const wasOnPick = !!cur && picks.includes(cur);
+    const target = wasOnPick ? cur! : picks[0];
+    select(target);
+    const body = bodyById(target);
+    if (body) {
+      dragOffsetRef.current = { x: body.position.x - world.x, y: body.position.y - world.y };
+    }
+    selectDownRef.current = { picks, id: target, wasOnPick, x: e.clientX, y: e.clientY };
+    capture(canvasRef.current, e.pointerId);
   };
 
   const onCanvasPointerMove = (e: React.PointerEvent) => {
@@ -510,6 +546,19 @@ export default function App() {
     }
     dragOffsetRef.current = null;
     handleDragRef.current = null;
+
+    // Cycle-select: a click (no real drag) on something already selected
+    // advances to the next stacked object under the point.
+    const sd = selectDownRef.current;
+    selectDownRef.current = null;
+    if (sd && sd.wasOnPick && sd.picks.length > 1) {
+      const moved = Math.hypot(e.clientX - sd.x, e.clientY - sd.y) > 4;
+      if (!moved) {
+        const i = sd.picks.indexOf(sd.id);
+        select(sd.picks[(i + 1) % sd.picks.length]);
+      }
+    }
+
     if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
       canvasRef.current.releasePointerCapture(e.pointerId);
     }
