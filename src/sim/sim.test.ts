@@ -169,31 +169,40 @@ describe("connectors compile to joints", () => {
   const distTo = (t: { position: { x: number; y: number } }, x: number, y: number) =>
     Math.hypot(t.position.x - x, t.position.y - y);
 
-  it("a pin holds a body at a fixed distance and lets it swing (pendulum)", () => {
+  it("a pin hinges a body at its anchor point so it swings about it (lever)", () => {
     let scene = createScene();
-    const ball = addBody(scene, 0, makeBody("ball", { x: 2, y: 6 }));
-    scene = ball.scene;
-    // Pin the ball to a fixed world point 2m to its left.
+    // A 4m platform; pin its left end to the fixed world point it sits at.
+    const plat = addBody(scene, 0, {
+      ...makeBody("platform", { x: 0, y: 6 }),
+      props: { width: 4, height: 0.4, friction: 0.6, static: false },
+    });
+    scene = plat.scene;
     scene = addConnector(scene, 0, {
       type: "pin",
-      a: { world: { x: 0, y: 6 } },
-      b: { body: ball.id, local: { x: 0, y: 0 } },
+      a: { body: plat.id, local: { x: -2, y: 0 } }, // left end, in body-local
+      b: { world: { x: -2, y: 6 } }, // same world spot
       props: {},
     }).scene;
 
+    const leftEnd = (t: { position: { x: number; y: number }; rotation: number }) => ({
+      x: t.position.x + -2 * Math.cos(t.rotation),
+      y: t.position.y + -2 * Math.sin(t.rotation),
+    });
+
     const world = compile(scene);
-    let minY = Infinity;
-    let maxArmErr = 0;
-    for (let i = 0; i < 120; i++) {
+    let minCenterY = Infinity;
+    let maxPivotErr = 0;
+    for (let i = 0; i < 90; i++) {
       world.step();
-      const t = world.readTransforms().get(ball.id)!;
-      minY = Math.min(minY, t.position.y);
-      maxArmErr = Math.max(maxArmErr, Math.abs(distTo(t, 0, 6) - 2));
+      const t = world.readTransforms().get(plat.id)!;
+      const e = leftEnd(t);
+      maxPivotErr = Math.max(maxPivotErr, Math.hypot(e.x - -2, e.y - 6));
+      minCenterY = Math.min(minCenterY, t.position.y);
     }
-    // The rigid arm (pivot→bob center) stays ~2m throughout…
-    expect(maxArmErr).toBeLessThan(0.1);
-    // …and the bob swings down through the bottom of its arc (≈ y 4).
-    expect(minY).toBeLessThan(4.5);
+    // The pinned end stays put at the world pivot…
+    expect(maxPivotErr).toBeLessThan(0.1);
+    // …while the platform swings down about it under gravity.
+    expect(minCenterY).toBeLessThan(5.5);
     world.free();
   });
 

@@ -30,6 +30,8 @@ import {
 import {
   snapToGrid,
   bodyAtPoint,
+  bodiesAtPoint,
+  bodyToLocal,
   connectorAtPoint,
   endpointWorld,
   handleAtPoint,
@@ -214,8 +216,14 @@ export default function App() {
     if (!building) return;
     const raw = worldAt(e);
 
-    // Connector tool armed → begin drawing from the snapped start point.
+    // Connector tool armed → pin is click-to-place; spring/weld are drag-to-draw.
     if (connectorToolRef.current) {
+      if (connectorToolRef.current === "pin") {
+        placePin(raw);
+        connectorToolRef.current = null;
+        setConnectorTool(null);
+        return;
+      }
       connectorStartRef.current = snapEndpoint(sceneRef.current, 0, raw, ANCHOR_PX / cameraRef.current.scale);
       overlayRef.current = { snap: connectorStartRef.current.world };
       capture(canvasRef.current, e.pointerId);
@@ -326,6 +334,24 @@ export default function App() {
     if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
       canvasRef.current.releasePointerCapture(e.pointerId);
     }
+  };
+
+  /**
+   * Click-to-place a pin: a hinge through the point. Pins the top two bodies
+   * under the cursor together; if only one body is there, pins it to a fixed
+   * world point so it pivots about that spot.
+   */
+  const placePin = (p: { x: number; y: number }) => {
+    const ids = bodiesAtPoint(sceneRef.current, 0, p);
+    if (ids.length === 0) return;
+    const a = { body: ids[0], local: bodyToLocal(bodyById(ids[0])!, p) };
+    const b =
+      ids.length >= 2
+        ? { body: ids[1], local: bodyToLocal(bodyById(ids[1])!, p) }
+        : { world: { x: p.x, y: p.y } };
+    const added = addConnector(sceneRef.current, 0, makeConnector("pin", a, b));
+    sceneRef.current = added.scene;
+    select(added.id);
   };
 
   /** Create a connector from two snap results, unless it's degenerate. */
@@ -490,9 +516,11 @@ export default function App() {
         <span className="tip">
           {!building
             ? "Press ↺ to edit"
-            : connectorTool
-              ? `Drawing ${connectorTool} — drag from one anchor to another (Esc to cancel)`
-              : "Drag a shape in · click to select · drag to move"}
+            : connectorTool === "pin"
+              ? "Click where bodies overlap to pin them — or click one body to pin it in place (Esc to cancel)"
+              : connectorTool
+                ? `Drawing ${connectorTool} — drag from one point to another (Esc to cancel)`
+                : "Drag a shape in · click to select · drag to move"}
         </span>
       </div>
 

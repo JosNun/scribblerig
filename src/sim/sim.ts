@@ -139,9 +139,9 @@ function compileConnector(
       anchorB,
     );
   } else if (conn.type === "pin") {
-    // Pivot at a world-point endpoint if there is one, else at endpoint A.
-    const pivot = !isBodyEndpoint(conn.a) ? worldA : !isBodyEndpoint(conn.b) ? worldB : worldA;
-    jointData = RAPIER.JointData.revolute(toLocalPt(hostA, pivot), toLocalPt(hostB, pivot));
+    // A hinge: each body is anchored at its own attach point, and the joint
+    // holds those points coincident (click-to-place makes them the same point).
+    jointData = RAPIER.JointData.revolute(anchorA, anchorB);
   } else {
     // weld: lock the two bodies in their current relative pose (no snap).
     const weldPt = worldA;

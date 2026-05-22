@@ -201,7 +201,7 @@ const PIN: ConnectorTypeDef = {
   defaults: {},
   propSchema: [],
   stroke: "#2b2b2b",
-  help: "A free pivot: the bodies rotate about a shared point. Use for pendulums, levers, and hinges.",
+  help: "A free-spinning hinge. Click where two bodies overlap to pin them together, or click one body to pin it to a fixed point. Use for pendulums, levers, and gears.",
 };
 
 const CONNECTOR_ORDER: ConnectorTypeDef[] = [SPRING, WELD, PIN];

@@ -36,6 +36,20 @@ export function bodyAtPoint(
   return null;
 }
 
+/** All bodies whose geometry contains `worldPoint`, topmost (last-drawn) first. */
+export function bodiesAtPoint(scene: Scene, roomIndex: number, worldPoint: Vec2): string[] {
+  const bodies = scene.rooms[roomIndex].bodies;
+  const hits: string[] = [];
+  for (let i = bodies.length - 1; i >= 0; i--) {
+    const body = bodies[i];
+    const local = toLocal(worldPoint, body.position, body.rotation);
+    if (def(body.type).shapes(body.props as Props).some((s) => containsLocal(s, local))) {
+      hits.push(body.id);
+    }
+  }
+  return hits;
+}
+
 /** Transform a world point into a body's local frame (inverse translate+rotate). */
 function toLocal(world: Vec2, origin: Vec2, rotation: number): Vec2 {
   const dx = world.x - origin.x;

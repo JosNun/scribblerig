@@ -24,9 +24,16 @@ compiles them after all bodies exist, iterating in array order (determinism).
 - **spring** → `JointData.spring(restLength, stiffness, damping, anchorA,
   anchorB)`. The two endpoints stay distinct (the spring spans the gap); rest
   length defaults to the creation distance.
-- **pin** → `JointData.revolute(localOf(pivot, A), localOf(pivot, B))`. Both
-  anchors are recomputed from a single pivot point (the world endpoint if there
-  is one, else endpoint A) so they coincide — a clean free pivot.
+- **pin** → `JointData.revolute(anchorA, anchorB)`, each body anchored at its
+  own attach point (symmetric). A pin is a **single shared-point hinge**, placed
+  by *clicking*: click where two bodies overlap to pin them together, or click
+  one body to pin it to a fixed world point (the editor builds both endpoints at
+  that one click point, so the anchors coincide). An earlier design recomputed
+  both anchors from one endpoint's pivot, which made the *other* body orbit that
+  point instead of hinging at its own attachment — the click-to-place model makes
+  the joint symmetric and removes that asymmetry. A *rigid* link between two
+  **separated** points (per-end pivot/fixed) is a distinct `rod` connector
+  (issue 13), not a pin.
 - **weld** → `JointData.fixed(anchorA, 0, anchorB, rotA − rotB)`. The relative
   frame `rotA − rotB` locks the bodies in their **current** relative pose, so a
   weld fuses two platforms where they sit rather than snapping them to a shared
