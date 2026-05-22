@@ -187,22 +187,63 @@ function range(body: Body, key: string): { min: number; max: number } {
   return { min: field?.min ?? 0.1, max: field?.max ?? Infinity };
 }
 
+/** Local-frame direction signs of a box corner handle (e.g. ne = +x, +y). */
+const HANDLE_DIR: Record<"nw" | "ne" | "se" | "sw", { sx: number; sy: number }> = {
+  ne: { sx: 1, sy: 1 },
+  nw: { sx: -1, sy: 1 },
+  se: { sx: 1, sy: -1 },
+  sw: { sx: -1, sy: -1 },
+};
+
 /**
- * New size props from dragging a resize handle to `pointerWorld`. Boxes resize
- * symmetrically about their center; circles resize by distance from center.
+ * New geometry from dragging a resize handle to `pointerWorld`. Returns both the
+ * size `props` and the body `position` (which moves for an anchored resize).
+ *
+ * - **Default (anchored)** — dragging a box corner moves *that* corner while the
+ *   opposite corner stays pinned in world space, so the body recenters. Math is
+ *   done in the body's local frame, so it works for a rotated box; rotation is
+ *   unchanged. Clamping a dimension keeps the anchor fixed (the center is
+ *   recomputed from the clamped size).
+ * - **Symmetric (`symmetric`, Alt held)** — both sides resize about a fixed
+ *   center, the original behaviour.
+ * - **Circles** — resize by distance from center; the center never moves and
+ *   `symmetric` is a no-op.
  */
-export function applyResize(body: Body, handle: HandleId, pointerWorld: Vec2): Props {
+export function applyResize(
+  body: Body,
+  handle: HandleId,
+  pointerWorld: Vec2,
+  symmetric = false,
+): { props: Props; position: Vec2 } {
   const local = toLocal(pointerWorld, body.position, body.rotation);
   if (handle === "radius") {
     const r = range(body, "radius");
-    return { radius: clamp(Math.hypot(local.x, local.y), r.min, r.max) };
+    return { props: { radius: clamp(Math.hypot(local.x, local.y), r.min, r.max) }, position: body.position };
   }
   const w = range(body, "width");
   const h = range(body, "height");
-  return {
-    width: clamp(Math.abs(local.x) * 2, w.min, w.max),
-    height: clamp(Math.abs(local.y) * 2, h.min, h.max),
-  };
+  if (symmetric || !(handle in HANDLE_DIR)) {
+    return {
+      props: {
+        width: clamp(Math.abs(local.x) * 2, w.min, w.max),
+        height: clamp(Math.abs(local.y) * 2, h.min, h.max),
+      },
+      position: body.position,
+    };
+  }
+  // Anchored: pin the opposite corner. Its offset from the *current* center,
+  // in local coords, is the negated handle direction times the half-extents.
+  const { sx, sy } = HANDLE_DIR[handle as "nw" | "ne" | "se" | "sw"];
+  const { hw, hh } = halfExtents(body);
+  const anchorLocal = { x: -sx * hw, y: -sy * hh };
+  const width = clamp(Math.abs(local.x - anchorLocal.x), w.min, w.max);
+  const height = clamp(Math.abs(local.y - anchorLocal.y), h.min, h.max);
+  // The new center sits half a (clamped) box from the anchor along the drag
+  // direction. Expressed as an offset from the old center, then mapped to world
+  // through the body's rotation — so the pinned corner lands exactly where it
+  // was even after a dimension clamps.
+  const centerOffsetLocal = { x: sx * (width / 2 - hw), y: sy * (height / 2 - hh) };
+  return { props: { width, height }, position: bodyToWorld(body, centerOffsetLocal) };
 }
 
 /** New rotation (radians) so the upward rotation handle points at `pointerWorld`. */

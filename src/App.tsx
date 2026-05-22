@@ -625,8 +625,13 @@ export default function App() {
       if (handleDragRef.current === "rotate") {
         sceneRef.current = updateBody(sceneRef.current, 0, id, { rotation: applyRotation(body, raw) });
       } else {
-        const props = { ...body.props, ...applyResize(body, handleDragRef.current, raw) };
-        sceneRef.current = updateBody(sceneRef.current, 0, id, { props });
+        // Default drags the corner (opposite corner pinned); Alt resizes
+        // symmetrically about the center (issue 21).
+        const { props: sized, position } = applyResize(body, handleDragRef.current, raw, e.altKey);
+        sceneRef.current = updateBody(sceneRef.current, 0, id, {
+          props: { ...body.props, ...sized },
+          position,
+        });
       }
       bump();
     } else if (dragOffsetRef.current) {

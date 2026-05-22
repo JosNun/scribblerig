@@ -1,6 +1,6 @@
 # 21 — Corner resize should anchor the opposite corner (Alt = symmetric)
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

@@ -119,20 +119,59 @@ describe("handles", () => {
 });
 
 describe("applyResize", () => {
-  it("resizes a box symmetrically about its center from a corner drag", () => {
-    const next = applyResize(platform(), "ne", { x: 2, y: 0.6 });
-    expect(next).toMatchObject({ width: 4, height: 1.2 });
+  // The world position of a box corner, given its handle direction signs.
+  const cornerWorld = (b: Body, sx: number, sy: number) =>
+    bodyToWorld(b, { x: (sx * (b.props.width as number)) / 2, y: (sy * (b.props.height as number)) / 2 });
+
+  it("anchors the opposite corner by default, moving the center", () => {
+    // Platform is 3 × 0.4 at the origin. Drag the ne corner to (2, 1): the sw
+    // corner (-1.5, -0.2) must stay put, so the box spans (-1.5,-0.2)→(2,1).
+    const { props, position } = applyResize(platform(), "ne", { x: 2, y: 1 });
+    expect(props).toMatchObject({ width: 3.5, height: 1.2 });
+    expect(position.x).toBeCloseTo(0.25, 6);
+    expect(position.y).toBeCloseTo(0.4, 6);
   });
 
-  it("clamps box dimensions to the schema range", () => {
-    const next = applyResize(platform(), "ne", { x: 50, y: 0.01 });
-    expect(next.width).toBe(12); // schema max
-    expect(next.height).toBe(0.1); // schema min
+  it("keeps the opposite corner fixed on a rotated box", () => {
+    const b = platform({ rotation: Math.PI / 4, position: { x: 1, y: 2 } });
+    const anchorBefore = cornerWorld(b, -1, -1); // sw, opposite the ne handle
+    const { props, position } = applyResize(b, "ne", { x: 3, y: 4 });
+    const resized = { ...b, position, props: { ...b.props, ...props } };
+    const anchorAfter = cornerWorld(resized, -1, -1);
+    expect(anchorAfter.x).toBeCloseTo(anchorBefore.x, 6);
+    expect(anchorAfter.y).toBeCloseTo(anchorBefore.y, 6);
   });
 
-  it("resizes a circle by distance from center", () => {
-    const next = applyResize(ball(), "radius", { x: 1.2, y: 0 });
-    expect(next).toMatchObject({ radius: 1.2 });
+  it("keeps the anchor corner fixed when a dimension clamps", () => {
+    const b = platform(); // width 3 (max 12), height 0.4 (min 0.1)
+    const anchorBefore = cornerWorld(b, -1, -1);
+    const { props, position } = applyResize(b, "ne", { x: 50, y: -0.15 });
+    expect(props.width).toBe(12); // clamped to schema max
+    expect(props.height).toBe(0.1); // clamped to schema min
+    const resized = { ...b, position, props: { ...b.props, ...props } };
+    const anchorAfter = cornerWorld(resized, -1, -1);
+    expect(anchorAfter.x).toBeCloseTo(anchorBefore.x, 6);
+    expect(anchorAfter.y).toBeCloseTo(anchorBefore.y, 6);
+  });
+
+  it("resizes symmetrically about the center when Alt is held", () => {
+    const { props, position } = applyResize(platform(), "ne", { x: 2, y: 0.6 }, true);
+    expect(props).toMatchObject({ width: 4, height: 1.2 });
+    expect(position).toEqual({ x: 0, y: 0 }); // center unchanged
+  });
+
+  it("clamps box dimensions to the schema range (symmetric)", () => {
+    const { props } = applyResize(platform(), "ne", { x: 50, y: 0.01 }, true);
+    expect(props.width).toBe(12); // schema max
+    expect(props.height).toBe(0.1); // schema min
+  });
+
+  it("resizes a circle by distance from center (Alt is a no-op)", () => {
+    const sym = applyResize(ball(), "radius", { x: 1.2, y: 0 }, true);
+    const anchored = applyResize(ball(), "radius", { x: 1.2, y: 0 });
+    expect(sym.props).toMatchObject({ radius: 1.2 });
+    expect(anchored.props).toMatchObject({ radius: 1.2 });
+    expect(sym.position).toEqual({ x: 0, y: 0 }); // center fixed for circles
   });
 });
 
