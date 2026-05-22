@@ -367,7 +367,7 @@ export default function App() {
     // bodies at the click point); spring is drag-to-draw across a gap.
     if (connectorToolRef.current) {
       const tool = connectorToolRef.current;
-      if (tool === "pin" || tool === "weld") {
+      if (tool === "pin" || tool === "weld" || tool === "motor") {
         placeOverlap(tool, raw);
         connectorToolRef.current = null;
         setConnectorTool(null);
@@ -516,11 +516,12 @@ export default function App() {
   };
 
   /**
-   * Click-to-place a pin or weld through the point. Joins the top two bodies
-   * under the cursor at that shared point; if only one body is there, anchors
-   * it to a fixed world point (a pin pivots about it; a weld locks to it).
+   * Click-to-place a pin, weld, or motor through the point. Joins the top two
+   * bodies under the cursor at that shared point; if only one body is there,
+   * anchors it to a fixed world point (a pin pivots, a weld locks, a motor
+   * drives the body about that point).
    */
-  const placeOverlap = (type: "pin" | "weld", p: { x: number; y: number }) => {
+  const placeOverlap = (type: "pin" | "weld" | "motor", p: { x: number; y: number }) => {
     const ids = bodiesAtPoint(sceneRef.current, 0, p);
     if (ids.length === 0) return;
     const a = { body: ids[0], local: bodyToLocal(bodyById(ids[0])!, p) };
@@ -560,7 +561,11 @@ export default function App() {
     }
     const conn = connById(id);
     if (conn) {
-      sceneRef.current = updateConnector(sceneRef.current, 0, id, { props: { ...conn.props, ...patch } });
+      const props = { ...conn.props, ...patch };
+      sceneRef.current = updateConnector(sceneRef.current, 0, id, { props });
+      // Push motor tuning into the live joint so speed/direction change mid-run
+      // without a Reset. Writing to the scene too keeps a replay consistent.
+      if (conn.type === "motor") worldRef.current?.setMotor(id, props);
       bump();
     }
   };
@@ -780,36 +785,53 @@ export default function App() {
     ? "Press Reset to edit"
     : connectorTool === "pin" || connectorTool === "weld"
       ? `Click where two bodies overlap to ${connectorTool} them — or click one body to anchor it in place (Esc to cancel)`
-      : connectorTool
-        ? `Drawing ${connectorTool} — drag from one point to another (Esc to cancel)`
-        : "Drag a shape in · click to select · drag to move";
+      : connectorTool === "motor"
+        ? "Click a body to mount a motor and spin it — or click where two bodies overlap (Esc to cancel)"
+        : connectorTool
+          ? `Drawing ${connectorTool} — drag from one point to another (Esc to cancel)`
+          : "Drag a shape in · click to select · drag to move";
+
+  // A motor stays editable while the sim runs, so its speed/direction can be
+  // tuned live; everything else is build-only.
+  const liveMotor = !building && selectedConnector?.type === "motor" ? selectedConnector : null;
 
   // Shown on the drawer's peek so you know what dragging up will edit.
   const contextLabel = !building
-    ? "Running"
+    ? liveMotor
+      ? "Motor (live)"
+      : "Running"
     : selectedBody
       ? def(selectedBody.type).label
       : selectedConnector
         ? connectorDef(selectedConnector.type).label
         : "Room settings";
 
-  const rightPanelEl = building && (
-    selectedBody ? (
-      <PropertyPanel
-        title={def(selectedBody.type).label}
-        schema={def(selectedBody.type).propSchema}
-        props={selectedBody.props}
-        onChange={onPropChange}
-      />
-    ) : selectedConnector ? (
-      <PropertyPanel
-        title={connectorDef(selectedConnector.type).label}
-        schema={connectorDef(selectedConnector.type).propSchema}
-        props={selectedConnector.props}
-        onChange={onPropChange}
-      />
-    ) : (
-      <RoomSettingsPanel settings={roomSettings} onChange={onRoomChange} />
+  const rightPanelEl = liveMotor ? (
+    <PropertyPanel
+      title={connectorDef(liveMotor.type).label}
+      schema={connectorDef(liveMotor.type).propSchema}
+      props={liveMotor.props}
+      onChange={onPropChange}
+    />
+  ) : (
+    building && (
+      selectedBody ? (
+        <PropertyPanel
+          title={def(selectedBody.type).label}
+          schema={def(selectedBody.type).propSchema}
+          props={selectedBody.props}
+          onChange={onPropChange}
+        />
+      ) : selectedConnector ? (
+        <PropertyPanel
+          title={connectorDef(selectedConnector.type).label}
+          schema={connectorDef(selectedConnector.type).propSchema}
+          props={selectedConnector.props}
+          onChange={onPropChange}
+        />
+      ) : (
+        <RoomSettingsPanel settings={roomSettings} onChange={onRoomChange} />
+      )
     )
   );
 

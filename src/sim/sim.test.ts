@@ -317,3 +317,54 @@ describe("connectors compile to joints", () => {
     expect(build(false)).toBeLessThan(0.6); // no collision → reaches near rest length
   });
 });
+
+describe("motor connector", () => {
+  // A wheel pinned through its center to a fixed world point, driven by a motor.
+  // Gravity acts through the pivot (no torque), so the only motion is the spin.
+  const drive = (props: Record<string, number | boolean>) => {
+    const w = addBody(createScene(), 0, makeBody("wheel", { x: 6, y: 6 }));
+    const scene = addConnector(w.scene, 0, {
+      type: "motor",
+      a: { body: w.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 6, y: 6 } },
+      props,
+    });
+    return { world: compile(scene.scene), id: w.id, connId: scene.id };
+  };
+
+  // Instantaneous angular velocity (rad/s) over one step, wrap-safe.
+  const angVel = (world: ReturnType<typeof compile>, id: string) => {
+    const r1 = world.readTransforms().get(id)!.rotation;
+    world.step();
+    const r2 = world.readTransforms().get(id)!.rotation;
+    return Math.atan2(Math.sin(r2 - r1), Math.cos(r2 - r1)) * 60;
+  };
+
+  it("spins the attached body up to the configured speed while pinning it to the pivot", () => {
+    const { world, id } = drive({ speed: 6, torque: 20, reverse: false });
+    for (let i = 0; i < 120; i++) world.step(); // settle to steady state
+    expect(angVel(world, id)).toBeCloseTo(6, 0); // ≈ target, CCW (positive)
+    // The revolute joint holds the body at its pivot — it spins, it doesn't fall.
+    const p = world.readTransforms().get(id)!.position;
+    expect(Math.hypot(p.x - 6, p.y - 6)).toBeLessThan(0.2);
+    world.free();
+  });
+
+  it("reverses the spin direction when reverse is on", () => {
+    const { world, id } = drive({ speed: 6, torque: 20, reverse: true });
+    for (let i = 0; i < 120; i++) world.step();
+    expect(angVel(world, id)).toBeCloseTo(-6, 0); // ≈ -target, CW (negative)
+    world.free();
+  });
+
+  it("retargets the live spin when the speed is tuned, without recompiling", () => {
+    const { world, id, connId } = drive({ speed: 2, torque: 20, reverse: false });
+    for (let i = 0; i < 120; i++) world.step();
+    expect(angVel(world, id)).toBeCloseTo(2, 0);
+
+    world.setMotor(connId, { speed: 8, torque: 20, reverse: false });
+    for (let i = 0; i < 120; i++) world.step();
+    expect(angVel(world, id)).toBeCloseTo(8, 0);
+    world.free();
+  });
+});

@@ -212,9 +212,26 @@ const PIN: ConnectorTypeDef = {
   help: "A free-spinning hinge. Click where two bodies overlap to pin them together, or click one body to pin it to a fixed point. Use for pendulums, levers, and gears.",
 };
 
-const CONNECTOR_ORDER: ConnectorTypeDef[] = [SPRING, WELD, PIN];
+// A powered hinge: a revolute joint with a velocity motor. Placed like a pin
+// (click overlap, or click one body to mount it on a fixed world pivot). The
+// motor spins the attached body; speed/direction are live-tunable while running.
+const MOTOR: ConnectorTypeDef = {
+  type: "motor",
+  label: "Motor",
+  defaults: { speed: 4, torque: 20, reverse: false },
+  propSchema: [
+    { key: "speed", label: "Speed", kind: "number", min: 0, max: 30, step: 0.5, help: "How fast the motor spins, in radians per second. Editable while running." },
+    { key: "torque", label: "Torque", kind: "number", min: 1, max: 200, step: 1, help: "How hard the motor drives toward its target speed — higher torque spins heavier bodies up faster." },
+    { key: "reverse", label: "Reverse", kind: "boolean", help: "Flip the spin direction (clockwise vs counter-clockwise)." },
+  ],
+  stroke: "#3b8c5a",
+  help: "A powered hinge that spins the attached body. Click one body to mount and drive it on a fixed pivot, or click where two bodies overlap. Use for wheels, fans, and gears.",
+};
+
+const CONNECTOR_ORDER: ConnectorTypeDef[] = [SPRING, MOTOR, WELD, PIN];
 const CONNECTOR_BY_TYPE: Record<ConnectorType, ConnectorTypeDef> = {
   spring: SPRING,
+  motor: MOTOR,
   weld: WELD,
   pin: PIN,
 };

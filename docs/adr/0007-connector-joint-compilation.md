@@ -5,7 +5,7 @@ Date: 2026-05-21
 
 ## Context
 
-Connectors (spring, weld, pin) are jointless constraints with no collision
+Connectors (spring, motor, weld, pin) are jointless constraints with no collision
 geometry of their own — only bodies collide ([CONTEXT.md](../../CONTEXT.md)). The
 PRD model: a connector has two **endpoints**, each either a point on a body
 (`{body, local}`) or a fixed point in world space (`{world}`). The fixed-point
@@ -34,6 +34,20 @@ compiles them after all bodies exist, iterating in array order (determinism).
   the joint symmetric and removes that asymmetry. A *rigid* link between two
   **separated** points (per-end pivot/fixed) is a distinct `rod` connector
   (issue 13), not a pin.
+- **motor** → the same `JointData.revolute(anchorA, anchorB)` as a pin, with a
+  **velocity motor** configured on the created joint
+  (`configureMotorModel(AccelerationBased)` + `configureMotorVelocity(target,
+  factor)`). Acceleration-based so the body reaches the set speed regardless of
+  its mass; `speed` is the target angular velocity, `reverse` flips its sign, and
+  `torque` is the drive factor (how hard it tracks the target — there is no hard
+  max-force cap in the rapier2d-compat API). The motor drives body2 relative to
+  body1; the "fixed body first" reorder (below) means a body mounted on a fixed
+  pivot is body2, so a positive speed spins it counter-clockwise (intuitive).
+  Placed click-to-place like a pin. **Live-tunable**: `compile` keeps a
+  `connectorId → joint` map and exposes `SimWorld.setMotor(id, props)`, which
+  re-applies the motor config to the live joint so speed/direction change mid-run
+  without a recompile (the editor also writes the change to `scene` so a
+  reset-replay stays consistent). (Issue 06.)
 - **weld** → `JointData.fixed(anchorA, 0, anchorB, rotA − rotB)`. The relative
   frame `rotA − rotB` locks the bodies in their **current** relative pose, so a
   weld fuses two platforms where they sit rather than snapping them to a shared

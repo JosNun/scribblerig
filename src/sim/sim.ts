@@ -28,6 +28,12 @@ export interface SimWorld {
   step(): void;
   /** Current transform of every body, keyed by design-graph body id. */
   readTransforms(): Map<string, BodyTransform>;
+  /**
+   * Live-update a motor connector's drive from its props, without recompiling —
+   * so motor speed/direction can be tuned mid-run. No-op for unknown ids or
+   * non-motor connectors.
+   */
+  setMotor(connectorId: string, props: Props): void;
   /** Stable checksum of full world state; equal iff the states are identical. */
   checksum(): string;
   /** Release the underlying Rapier world. */
@@ -58,8 +64,11 @@ export function compile(scene: Scene): SimWorld {
   }
 
   // Connectors compile to joints, in array order, after all bodies exist.
+  // Keep the joints by connector id so motors can be re-tuned live.
+  const joints = new Map<string, RAPIER.ImpulseJoint>();
   for (const conn of room.connectors) {
-    compileConnector(world, conn, room.bodies, handles);
+    const joint = compileConnector(world, conn, room.bodies, handles);
+    if (joint) joints.set(conn.id, joint);
   }
 
   return {
@@ -71,6 +80,12 @@ export function compile(scene: Scene): SimWorld {
         out.set(id, { position: { x: t.x, y: t.y }, rotation: rb.rotation() });
       }
       return out;
+    },
+    setMotor: (connectorId, props) => {
+      const joint = joints.get(connectorId);
+      if (joint && joint.type() === RAPIER.JointType.Revolute) {
+        configureMotor(joint as RAPIER.RevoluteImpulseJoint, props);
+      }
     },
     checksum: () => fnv1a(world.takeSnapshot()),
     free: () => world.free(),
@@ -117,10 +132,10 @@ function compileConnector(
   conn: Connector,
   bodies: Body[],
   handles: Map<string, RAPIER.RigidBody>,
-): void {
+): RAPIER.ImpulseJoint | null {
   let hostA = endHost(world, conn.a, bodies, handles);
   let hostB = endHost(world, conn.b, bodies, handles);
-  if (!hostA || !hostB) return; // a referenced body was deleted
+  if (!hostA || !hostB) return null; // a referenced body was deleted
 
   let anchorA = anchorLocal(conn.a);
   let anchorB = anchorLocal(conn.b);
@@ -150,9 +165,10 @@ function compileConnector(
       anchorA,
       anchorB,
     );
-  } else if (conn.type === "pin") {
+  } else if (conn.type === "pin" || conn.type === "motor") {
     // A hinge: each body is anchored at its own attach point, and the joint
     // holds those points coincident (click-to-place makes them the same point).
+    // A motor is the same revolute joint with a velocity drive added below.
     jointData = RAPIER.JointData.revolute(anchorA, anchorB);
   } else {
     // weld: lock the two bodies in their current relative pose (no snap).
@@ -167,8 +183,27 @@ function compileConnector(
 
   const joint = world.createImpulseJoint(jointData, hostA.rb, hostB.rb, true);
   // Whether the two joined bodies collide with each other is per-connector
-  // (spring defaults on; pin/weld off so overlapping parts don't fight).
-  (joint as RAPIER.ImpulseJoint).setContactsEnabled(props.collide === true);
+  // (spring defaults on; pin/weld/motor off so overlapping parts don't fight).
+  joint.setContactsEnabled(props.collide === true);
+
+  // The motor drives body2 relative to body1. The "fixed body first" reorder
+  // above means a body-mounted-on-a-fixed-pivot motor has the body as body2,
+  // so a positive speed spins it counter-clockwise (the intuitive direction).
+  if (conn.type === "motor") {
+    configureMotor(joint as RAPIER.RevoluteImpulseJoint, props);
+  }
+  return joint;
+}
+
+/**
+ * Configure a revolute joint's velocity motor from motor props. Acceleration-
+ * based so the body reaches the target speed regardless of its mass; `torque`
+ * is the drive factor (how hard it tracks the target), `reverse` flips it.
+ */
+function configureMotor(joint: RAPIER.RevoluteImpulseJoint, props: Props): void {
+  const target = (props.reverse === true ? -1 : 1) * num(props.speed, 0);
+  joint.configureMotorModel(RAPIER.MotorModel.AccelerationBased);
+  joint.configureMotorVelocity(target, num(props.torque, 1));
 }
 
 function endHost(

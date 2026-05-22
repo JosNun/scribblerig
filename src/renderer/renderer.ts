@@ -134,11 +134,15 @@ export function createRenderer(
       square(pa, 4);
       square(pb, 4);
     } else {
+      // pin or motor: a hinge. Faint axis line + a pivot ring; a motor adds a
+      // little rotation arrow so it reads as "powered".
       ctx.globalAlpha = 0.5;
       line(pa, pb);
       ctx.globalAlpha = 1;
       const pivotWorld = !isBodyEndpoint(conn.a) ? aw : !isBodyEndpoint(conn.b) ? bw : aw;
-      ring(worldToScreen(cam, pivotWorld), 6);
+      const pivot = worldToScreen(cam, pivotWorld);
+      ring(pivot, 6);
+      if (conn.type === "motor") motorArc(pivot, 11);
     }
     // Draggable endpoint handles when selected.
     if (selected) {
@@ -193,6 +197,25 @@ export function createRenderer(
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fillStyle = "#fff";
     ctx.fill();
+    ctx.stroke();
+  }
+  /** A ~270° arc with an arrowhead — a "this spins" cue around a motor pivot. */
+  function motorArc(p: Vec2, r: number): void {
+    const a0 = -Math.PI / 2;
+    const a1 = Math.PI; // sweep clockwise in screen space (y is down)
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, a0, a1, false);
+    ctx.stroke();
+    const ex = p.x + r * Math.cos(a1);
+    const ey = p.y + r * Math.sin(a1);
+    const tx = Math.sin(a1); // unit tangent of the clockwise sweep at the end
+    const ty = -Math.cos(a1);
+    const h = 4;
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - (tx + ty) * h, ey - (ty - tx) * h);
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - (tx - ty) * h, ey - (ty + tx) * h);
     ctx.stroke();
   }
   /** A zigzag coil between two screen points (deterministic — no shimmer). */

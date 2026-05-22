@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { bodyTypes, def, makeBody, type BodyTypeDef } from "./registry";
+import {
+  bodyTypes,
+  def,
+  makeBody,
+  connectorTypes,
+  connectorDef,
+  makeConnector,
+  type BodyTypeDef,
+} from "./registry";
 
 describe("registry", () => {
   it("offers ball, platform, and wheel as placeable body types", () => {
@@ -58,5 +66,17 @@ describe("registry", () => {
     expect(def("platform").isStatic(def("platform").defaults)).toBe(true);
     expect(def("ball").isStatic(def("ball").defaults)).toBe(false);
     expect(def("wheel").isStatic(def("wheel").defaults)).toBe(false);
+  });
+
+  it("offers spring, motor, weld, and pin as connector types", () => {
+    expect(connectorTypes().map((c) => c.type)).toEqual(["spring", "motor", "weld", "pin"]);
+  });
+
+  it("gives the motor speed, torque, and direction props with defaults", () => {
+    const motor = connectorDef("motor");
+    expect(motor.propSchema.map((f) => f.key)).toEqual(["speed", "torque", "reverse"]);
+    const conn = makeConnector("motor", { world: { x: 0, y: 0 } }, { body: "b", local: { x: 0, y: 0 } });
+    expect(conn.props).toEqual(motor.defaults);
+    expect(conn.props).not.toBe(motor.defaults); // copied, not shared
   });
 });

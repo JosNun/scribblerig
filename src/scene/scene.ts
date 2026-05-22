@@ -22,7 +22,7 @@ export interface Body {
   props: Record<string, number | boolean>;
 }
 
-export type ConnectorType = "spring" | "weld" | "pin";
+export type ConnectorType = "spring" | "weld" | "pin" | "motor";
 
 /**
  * One end of a connector: either a point on a body (in that body's local
