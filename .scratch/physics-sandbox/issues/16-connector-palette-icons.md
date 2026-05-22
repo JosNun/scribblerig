@@ -1,6 +1,6 @@
 # 16 — Icons for the connector palette (Spring / Weld / Pin)
 
-Status: needs-triage
+Status: done
 
 ## Parent
 
@@ -29,6 +29,49 @@ implementing.
 Whichever way, keep the palette layout working in both the desktop floating
 strip and the mobile horizontal scroll row, and keep the connector `label`/help
 text for accessibility (tooltip / screen readers).
+
+## Decision (triage) — Rough.js previews
+
+Chose **Rough.js previews** over the static line icons. A new
+[`src/ui/ConnectorPreview.tsx`](../../src/ui/ConnectorPreview.tsx) mirrors
+`BodyPreview`: a small doodle drawn per connector type, painted in the
+connector's own `stroke` colour, so the connector tiles read as the same
+illustrated toolset as the body tiles rather than line icons next to doodles.
+The glyphs reuse the on-canvas connector vocabulary so what you arm matches what
+you draw:
+
+- **Spring** — two anchor dots + a zigzag coil (purple).
+- **Motor** — a hinge ring + a ~270° rotation arc with an arrowhead (green).
+- **Weld** — a rigid bar with the two fused ends squared off (brown).
+- **Pin** — a faint axis with a pivot ring (ink).
+
+Static icons were rejected: they're line icons (off the hand-drawn vibe), weld
+has no good glyph in the set, and a colourless mask icon can't show each
+connector's identity colour.
+
+## Comments
+
+### 2026-05-22 — Implemented
+
+`ConnectorPreview` wired into both palette layouts (desktop strip + mobile
+scroll row); the connector tiles now stack preview-over-label like body tiles
+(shared flex-column CSS). The armed-tool highlight changed from a dark fill to a
+warm `#f0e9d8` inset-border highlight — the old dark fill would have swallowed
+the dark-stroked Pin glyph. `label`/`help` text is kept for the tooltip and
+screen readers. Verified in-browser: all four glyphs render in their connector
+colours, the layout holds in both desktop and mobile palettes, and an armed Pin
+tile stays legible. 84 tests pass; component is impure canvas (verified
+in-browser, like `BodyPreview`, so no unit test).
+
+### 2026-05-22 — Palette restyle (follow-on)
+
+With the connector tiles now illustrated, restyled the **whole palette** to a
+*sticker-tile* look so it reads as one card rather than boxes-in-a-box: per-tile
+borders dropped (the panel is the only frame), doodles sit directly on the paper
+with a soft warm hover wash + slight lift, and a `Shapes` header was added
+(desktop) to balance the existing `Connect` divider. The armed-connector
+highlight keeps the inset doodle border as the single strongest affordance.
+Verified in both the desktop strip and the mobile scroll row.
 
 ## Notes
 

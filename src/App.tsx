@@ -55,6 +55,7 @@ import {
 } from "./editor/editor";
 import { snap as snapEndpoint, endpointOf, type SnapResult } from "./snapping/snapping";
 import { BodyPreview } from "./ui/BodyPreview";
+import { ConnectorPreview } from "./ui/ConnectorPreview";
 import { Icon } from "./ui/Icon";
 import { PropertyPanel } from "./ui/PropertyPanel";
 import { RoomSettingsPanel } from "./ui/RoomSettingsPanel";
@@ -880,6 +881,7 @@ export default function App() {
   // ----- shared panel fragments, rendered into either layout -----
   const paletteEls = (
     <>
+      <div className="palette-label">Shapes</div>
       {bodyTypes().map((d) => (
         <button
           key={d.type}
@@ -907,7 +909,8 @@ export default function App() {
           disabled={!building}
           onClick={() => armConnector(c.type)}
         >
-          {c.label}
+          <ConnectorPreview type={c.type} />
+          <span>{c.label}</span>
         </button>
       ))}
     </>
@@ -943,7 +946,8 @@ export default function App() {
           disabled={!building}
           onClick={() => armConnector(c.type)}
         >
-          {c.label}
+          <ConnectorPreview type={c.type} />
+          <span>{c.label}</span>
         </button>
       ))}
     </>

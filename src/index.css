@@ -83,7 +83,7 @@ textarea {
   color: #2b2b2b;
   border: 2px solid #2b2b2b;
   border-radius: 9px;
-  background: #fff;
+  background: transparent;
   cursor: pointer;
 }
 
@@ -104,8 +104,13 @@ textarea {
   padding: 6px 12px;
   border: 2px solid #2b2b2b;
   border-radius: 9px;
-  background: #fff;
+  background: transparent;
   cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.panel button:hover:not(:disabled) {
+  background: rgba(240, 233, 216, 0.7);
 }
 
 /* Icon-bearing buttons (transport, Delete) center their glyph both axes.
@@ -143,7 +148,11 @@ textarea {
   pointer-events: none;
 }
 
-.palette-item {
+/* Sticker tiles: doodle-over-label, sitting directly on the panel with no
+   per-tile frame (the panel is the only card). Hover gives a soft warm wash and
+   a slight lift; the borders are dropped via the shared rule below. */
+.palette-item,
+.palette-connector {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -151,15 +160,42 @@ textarea {
   width: 92px;
   padding: 6px 8px !important;
   font-size: 13px;
+  border: none !important;
+  background: transparent;
+  border-radius: 10px;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+.palette-item {
   cursor: grab;
   touch-action: none;
+}
+
+.palette-item:hover,
+.palette-connector:hover {
+  background: rgba(240, 233, 216, 0.7);
+  transform: translateY(-1px);
 }
 
 .palette-item:active {
   cursor: grabbing;
   background: #f0e9d8;
+  transform: none;
 }
 
+/* Armed tool: a bold, warm highlight with a doodle frame — the strongest
+   affordance, so it gets the only border a tile ever shows. */
+.palette-connector.active,
+.palette-connector.active:hover {
+  background: #f0e9d8;
+  box-shadow: inset 0 0 0 2px #2b2b2b;
+  font-weight: 700;
+  transform: none;
+}
+
+/* Section headers. `.palette-label` is a plain caps label (the first group);
+   `.palette-divider` adds the dashed rule that separates the next group. */
+.palette-label,
 .palette-divider {
   font-size: 11px;
   font-weight: 700;
@@ -167,22 +203,16 @@ textarea {
   letter-spacing: 0.5px;
   opacity: 0.5;
   text-align: center;
+}
+
+.palette-divider {
   border-top: 1.5px dashed #2b2b2b;
   margin-top: 4px;
   padding-top: 6px;
 }
 
-.palette-connector {
-  width: 92px;
-  font-size: 13px;
-}
-
-.palette-connector.active {
-  background: #2b2b2b;
-  color: #fff;
-}
-
-.palette-item canvas {
+.palette-item canvas,
+.palette-connector canvas {
   pointer-events: none;
 }
 
