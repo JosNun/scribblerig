@@ -68,10 +68,28 @@ textarea {
   transform: translateX(-50%);
 }
 
-.transport button {
+/* Square icon buttons — transport controls and the Delete action. */
+.transport button,
+.icon-btn {
   font-size: 18px;
   width: 40px;
   height: 40px;
+  padding: 6px;
+}
+
+/* The Delete button lives in the mobile drawer, outside any `.panel`, so it
+   carries the doodle button chrome itself to match the transport buttons. */
+.icon-btn {
+  color: #2b2b2b;
+  border: 2px solid #2b2b2b;
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .actions {
@@ -82,11 +100,23 @@ textarea {
 
 .panel button {
   font: inherit;
+  color: #2b2b2b;
   padding: 6px 12px;
   border: 2px solid #2b2b2b;
   border-radius: 9px;
   background: #fff;
   cursor: pointer;
+}
+
+/* Icon-bearing buttons (transport, Delete) center their glyph both axes.
+   `.icon-btn` is listed explicitly because the Delete button lives in the
+   mobile drawer, outside any `.panel`. */
+.panel button:has(> .icon),
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .panel button:disabled {
@@ -253,6 +283,18 @@ textarea {
 
 .help:hover {
   opacity: 1;
+}
+
+/* Icon glyphs (see ui/Icon.tsx) — a CSS mask painted with currentColor so the
+   doodle SVGs take on the ink colour and the button's disabled opacity. */
+.icon {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.15em;
+  background-color: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
 }
 
 .prop-row.dial-row {
@@ -434,7 +476,8 @@ textarea {
     padding: 10px 14px;
     min-height: 44px;
   }
-  .transport button {
+  .transport button,
+  .icon-btn {
     width: 46px;
     height: 46px;
   }

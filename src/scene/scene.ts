@@ -81,7 +81,7 @@ export function defaultRoomSettings(): RoomSettings {
     walls: { floor: true, ceiling: false, left: false, right: false },
     // A square play area, framed on screen; the floor sits at y = 0.
     size: { width: 12, height: 12 },
-    snap: true,
+    snap: false,
   };
 }
 

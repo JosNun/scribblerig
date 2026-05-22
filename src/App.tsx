@@ -43,6 +43,7 @@ import {
 } from "./editor/editor";
 import { snap as snapEndpoint, endpointOf, type SnapResult } from "./snapping/snapping";
 import { BodyPreview } from "./ui/BodyPreview";
+import { Icon } from "./ui/Icon";
 import { PropertyPanel } from "./ui/PropertyPanel";
 import { RoomSettingsPanel } from "./ui/RoomSettingsPanel";
 
@@ -767,7 +768,7 @@ export default function App() {
 
   const actionsEls = (
     <>
-      <button onClick={deleteSelected} disabled={!building || !selected}>🗑 Delete</button>
+      <button className="icon-btn" onClick={deleteSelected} disabled={!building || !selected} title="Delete"><Icon name="delete" /></button>
       <label className="snap">
         <input type="checkbox" checked={snap} onChange={toggleSnap} disabled={!building} />
         Grid snap
@@ -776,7 +777,7 @@ export default function App() {
   );
 
   const tipText = !building
-    ? "Press ↺ to edit"
+    ? "Press Reset to edit"
     : connectorTool === "pin" || connectorTool === "weld"
       ? `Click where two bodies overlap to ${connectorTool} them — or click one body to anchor it in place (Esc to cancel)`
       : connectorTool
@@ -826,10 +827,10 @@ export default function App() {
 
       {/* Transport — floating top-center */}
       <div className="panel transport">
-        <button onClick={play} disabled={!ready || state === "running"} title="Play">▶</button>
-        <button onClick={pause} disabled={!ready || state !== "running"} title="Pause">⏸</button>
-        <button onClick={reset} disabled={!ready || state === "build"} title="Reset">↺</button>
-        <button onClick={fitView} disabled={!ready} title="Fit view to room">⤢</button>
+        <button onClick={play} disabled={!ready || state === "running"} title="Play"><Icon name="play" /></button>
+        <button onClick={pause} disabled={!ready || state !== "running"} title="Pause"><Icon name="pause" /></button>
+        <button onClick={reset} disabled={!ready || state === "build"} title="Reset"><Icon name="reset" /></button>
+        <button onClick={fitView} disabled={!ready} title="Fit view to room"><Icon name="fit" /></button>
         <span className="state">{ready ? state : "loading…"}</span>
       </div>
 
