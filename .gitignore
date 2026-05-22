@@ -6,3 +6,10 @@ dist
 
 # stray Chrome devtools-mcp cache accidentally written to a literal ~ path
 /~
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
