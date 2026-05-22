@@ -21,6 +21,7 @@ import {
 import { createScene, tracerScene, type Scene } from "../scene/scene";
 
 const SCENE_PREFIX = "physics-sandbox:scene:";
+const THUMB_PREFIX = "physics-sandbox:thumb:";
 const INDEX_KEY = "physics-sandbox:sessions";
 const SID_KEY = "physics-sandbox:sid";
 const LEGACY_KEY = "physics-sandbox:scene"; // single-key autosave from issue 08
@@ -54,13 +55,33 @@ export function bootSession(): SessionBoot {
   return { id, scene: (recent && readScene(recent.id)) || tracerScene() };
 }
 
-/** Persist a build, materializing a lazy fork on first call. */
-export function saveSession(id: string, scene: Scene): void {
+/**
+ * Persist a build, materializing a lazy fork on first call. An optional
+ * thumbnail (data URL) is stored under its own key so the index stays small and
+ * a thumbnail write that hits quota can't lose the build itself.
+ */
+export function saveSession(id: string, scene: Scene, thumbnail?: string | null): void {
   try {
     localStorage.setItem(SCENE_PREFIX + id, encodeScene(scene));
     writeIndex(upsertSession(readIndex(), { id, title: deriveTitle(scene), updatedAt: Date.now() }));
   } catch {
     /* storage full or unavailable — best-effort */
+  }
+  if (thumbnail) {
+    try {
+      localStorage.setItem(THUMB_PREFIX + id, thumbnail);
+    } catch {
+      /* thumbnail is non-essential — drop it rather than failing the save */
+    }
+  }
+}
+
+/** The saved preview image (data URL) for a build, if any. */
+export function loadThumbnail(id: string): string | null {
+  try {
+    return localStorage.getItem(THUMB_PREFIX + id);
+  } catch {
+    return null;
   }
 }
 
@@ -86,6 +107,7 @@ export function newSession(): SessionBoot {
 export function deleteSession(id: string): void {
   try {
     localStorage.removeItem(SCENE_PREFIX + id);
+    localStorage.removeItem(THUMB_PREFIX + id);
     writeIndex(removeSession(readIndex(), id));
   } catch {
     /* ignore */

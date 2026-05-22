@@ -522,12 +522,30 @@ textarea {
   background: #f0e9d8;
 }
 
-.build-title {
+/* Fit-to-room preview snapshot. The PNG is transparent; paper shows through. */
+.build-thumb {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  background: #fdf6e3;
+  border: 1.5px solid rgba(43, 43, 43, 0.3);
+  border-radius: 6px;
+}
+
+.build-meta {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.build-title {
+  width: 100%;
   font: inherit;
   font-size: 14px;
-  padding: 4px 6px;
+  padding: 3px 6px;
   border: 1.5px solid transparent;
   border-radius: 6px;
   background: transparent;

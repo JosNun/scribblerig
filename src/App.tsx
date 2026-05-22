@@ -25,6 +25,7 @@ import {
   newSession,
   deleteSession,
   renameSession,
+  loadThumbnail,
 } from "./share/storage";
 import { type SessionMeta } from "./share/sessions";
 import { createClock, type Clock, type ClockState } from "./clock/clock";
@@ -108,6 +109,29 @@ function designTransforms(scene: Scene): Map<string, BodyTransform> {
     m.set(b.id, { position: b.position, rotation: b.rotation });
   }
   return m;
+}
+
+/** Longest edge (px) of a saved-build preview thumbnail. */
+const THUMB_MAX = 200;
+
+/**
+ * Render the scene fit-to-room into a small offscreen canvas and return a PNG
+ * data URL — a stable preview independent of the live camera's pan/zoom. The
+ * PNG is transparent (paper colour comes from CSS behind the <img>).
+ */
+function renderThumbnail(scene: Scene): string | null {
+  try {
+    const { width, height } = scene.rooms[0].settings.size;
+    const scale = THUMB_MAX / Math.max(width, height);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(width * scale);
+    canvas.height = Math.round(height * scale);
+    const cam = fitCamera(width, height, canvas.width, canvas.height, 1.04);
+    createRenderer(canvas, cam).draw(scene, designTransforms(scene), null, undefined);
+    return canvas.toDataURL("image/png");
+  } catch {
+    return null;
+  }
 }
 
 export default function App() {
@@ -323,7 +347,10 @@ export default function App() {
   // doesn't materialize a duplicate build just by being opened.
   useEffect(() => {
     if (revision === 0) return;
-    const t = setTimeout(() => saveSession(sessionIdRef.current, sceneRef.current), 500);
+    const t = setTimeout(() => {
+      const scene = sceneRef.current;
+      saveSession(sessionIdRef.current, scene, renderThumbnail(scene));
+    }, 500);
     return () => clearTimeout(t);
   }, [revision]);
 
@@ -1003,15 +1030,23 @@ export default function App() {
           <ul className="builds-list">
             {builds.map((s) => {
               const current = s.id === sessionIdRef.current;
+              const thumb = loadThumbnail(s.id);
               return (
                 <li key={s.id} className={`build-row${current ? " current" : ""}`}>
-                  <input
-                    className="build-title"
-                    value={s.title}
-                    onChange={(e) => renameBuild(s.id, e.target.value)}
-                    aria-label="Build name"
-                  />
-                  <span className="build-time">{relTime(s.updatedAt)}</span>
+                  {thumb ? (
+                    <img className="build-thumb" src={thumb} alt="" />
+                  ) : (
+                    <span className="build-thumb empty" />
+                  )}
+                  <div className="build-meta">
+                    <input
+                      className="build-title"
+                      value={s.title}
+                      onChange={(e) => renameBuild(s.id, e.target.value)}
+                      aria-label="Build name"
+                    />
+                    <span className="build-time">{relTime(s.updatedAt)}</span>
+                  </div>
                   <button onClick={() => openBuild(s.id)} disabled={current}>
                     {current ? "Current" : "Open"}
                   </button>

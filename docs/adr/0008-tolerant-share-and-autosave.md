@@ -70,7 +70,11 @@ build** and past builds are browsable.
   reload-stable; a fresh tab has none and mints one.
 - **Per-session scenes** under `physics-sandbox:scene:<id>`, plus a
   `physics-sandbox:sessions` index of `{ id, title, updatedAt }`. The old single
-  `physics-sandbox:scene` key is migrated into a session on first boot.
+  `physics-sandbox:scene` key is migrated into a session on first boot. A
+  **preview thumbnail** (the scene rendered fit-to-room into a small offscreen
+  canvas, transparent PNG) is saved under `physics-sandbox:thumb:<id>` — its own
+  key so the index stays small and a thumbnail write hitting quota can't lose the
+  build.
 - **`bootSession` precedence**: shared URL fragment (fresh session) → this tab's
   own persisted session (stable reload) → **lazy fork of the most-recent build**.
   The lazy fork shows the most-recent content under a new id but is *not* written

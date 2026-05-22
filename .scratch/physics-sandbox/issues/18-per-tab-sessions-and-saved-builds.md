@@ -86,6 +86,15 @@ fresh-tab lazy fork resumes the most-recent content under a new id without
 touching the original; stable reload keeps the tab's own build; and the legacy
 single-key autosave migrates into a session.
 
+### 2026-05-22 — Build previews
+
+Each build now saves a **thumbnail** alongside it: the scene rendered
+fit-to-room into a small offscreen canvas (transparent PNG, paper shows through
+via CSS), stored under its own `physics-sandbox:thumb:<id>` key. The Builds list
+shows it next to the name so a build is recognizable at a glance rather than by
+title alone. Verified in-browser: editing regenerates the preview and it renders
+in the list.
+
 ## Notes
 
 - Builds on [issue 08](08-share-via-url-and-autosave.md) (codec + autosave) and
