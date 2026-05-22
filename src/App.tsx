@@ -117,6 +117,10 @@ export default function App() {
   const viewAdjustedRef = useRef(false);
   // Desktop drag-to-pan with the middle mouse button (last canvas px).
   const panDragRef = useRef<{ x: number; y: number } | null>(null);
+  // Palette collapse driven by the drawer's live position (see trackExpand).
+  const stripRef = useRef<HTMLDivElement>(null);
+  const expandRunningRef = useRef(false);
+  const expandReleaseRef = useRef<number | null>(null);
 
   const [ready, setReady] = useState(false);
   const [state, setState] = useState<ClockState>("build");
@@ -137,6 +141,49 @@ export default function App() {
     const on = () => setMobile(mq.matches);
     mq.addEventListener("change", on);
     return () => mq.removeEventListener("change", on);
+  }, []);
+
+  // Drive the palette's collapse from the drawer's live transform so it folds
+  // away *under the finger* as the sheet opens — one motion, not two. vaul
+  // animates the sheet's translateY (during the drag and the release settle);
+  // we read it each frame and map peek→full to `--expand` 0→1.
+  const trackExpand = () => {
+    const drawer = document.querySelector(".props-drawer") as HTMLElement | null;
+    const strip = stripRef.current;
+    if (drawer && strip) {
+      const t = getComputedStyle(drawer).transform;
+      if (t && t !== "none") {
+        const y = new DOMMatrixReadOnly(t).m42;
+        const vh = window.innerHeight;
+        const peek = vh - parseFloat(SNAP_PEEK);
+        const full = vh * (1 - SNAP_FULL);
+        const p = Math.max(0, Math.min(1, (peek - y) / (peek - full || 1)));
+        strip.style.setProperty("--expand", p.toFixed(3));
+      }
+    }
+    const released = expandReleaseRef.current;
+    if (released != null && performance.now() - released > 650) {
+      expandRunningRef.current = false; // settle finished; stop reading
+      return;
+    }
+    requestAnimationFrame(trackExpand);
+  };
+  const startExpandTracking = () => {
+    expandReleaseRef.current = null; // a new drag cancels any pending stop
+    if (expandRunningRef.current) return;
+    expandRunningRef.current = true;
+    requestAnimationFrame(trackExpand);
+  };
+  useEffect(() => {
+    const onUp = () => {
+      if (expandRunningRef.current) expandReleaseRef.current = performance.now();
+    };
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
   }, []);
 
   const building = state === "build";
@@ -798,6 +845,7 @@ export default function App() {
           snapPoints={[SNAP_PEEK, SNAP_FULL]}
           activeSnapPoint={drawerSnap}
           setActiveSnapPoint={setDrawerSnap}
+          onDrag={startExpandTracking}
         >
           <Drawer.Portal>
             <Drawer.Content className="drawer props-drawer">
@@ -809,10 +857,7 @@ export default function App() {
               {/* One scroll container: the palette scrolls off the top as the
                   properties scroll down. The palette fades while expanded. */}
               <div className="drawer-scroll">
-                <div
-                  className={`strip-row${drawerSnap === SNAP_FULL ? " faded" : ""}`}
-                  aria-disabled={!building}
-                >
+                <div ref={stripRef} className="strip-row" aria-disabled={!building}>
                   {mobilePaletteEls}
                 </div>
                 <div className="drawer-props">

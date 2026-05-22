@@ -338,23 +338,28 @@ textarea {
 
 /* Horizontal, scrollable palette row shown in the peek. touch-action pan-x
    lets the browser scroll it sideways while vertical drags reach our handlers
-   (drag a shape up to place it). Fades while the sheet is expanded. */
+   (drag a shape up to place it).
+
+   `--expand` (0 at peek → 1 at full) is driven per-frame from the drawer's live
+   position (see trackExpand), so the palette folds away *under the finger* as
+   the sheet opens, freeing the space for the properties. No CSS transition —
+   it tracks the drawer directly. */
 .strip-row {
+  --expand: 0;
   flex: 0 0 auto;
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
+  max-height: calc((1 - var(--expand)) * 130px);
+  opacity: calc(1 - var(--expand));
   overflow-x: auto;
+  overflow-y: hidden;
   touch-action: pan-x;
-  padding: 2px 0 8px;
+  padding: 2px 0 calc((1 - var(--expand)) * 8px);
   border-bottom: 1.5px dashed rgba(43, 43, 43, 0.25);
-  transition: opacity 180ms ease;
-}
-
-.strip-row.faded {
-  opacity: 0.3;
+  border-bottom-width: calc((1 - var(--expand)) * 1.5px);
 }
 
 .strip-row[aria-disabled="true"] {
