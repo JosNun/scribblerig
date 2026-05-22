@@ -151,6 +151,8 @@ export function createRenderer(
     ctx.fillStyle = color;
     ctx.lineWidth = width;
     if (conn.type === "spring") {
+      // The rest-length marker is for the selected spring only (issue 12).
+      if (selected) drawSpringRest(aw, bw, conn.props as Props);
       strokeSpring(pa, pb);
     } else if (conn.type === "weld") {
       line(pa, pb);
@@ -165,7 +167,9 @@ export function createRenderer(
       const pivotWorld = !isBodyEndpoint(conn.a) ? aw : !isBodyEndpoint(conn.b) ? bw : aw;
       const pivot = worldToScreen(cam, pivotWorld);
       ring(pivot, 6);
-      if (conn.type === "motor") motorArc(pivot, 11);
+      // Arrow follows the motor's actual direction: a non-reversed motor spins
+      // the body counter-clockwise; `reverse` flips it (issue 12).
+      if (conn.type === "motor") motorArc(pivot, 11, conn.props.reverse !== true);
     }
     // Draggable endpoint handles when selected.
     if (selected) {
@@ -222,25 +226,72 @@ export function createRenderer(
     ctx.fill();
     ctx.stroke();
   }
-  /** A ~270° arc with an arrowhead — a "this spins" cue around a motor pivot. */
-  function motorArc(p: Vec2, r: number): void {
-    const a0 = -Math.PI / 2;
-    const a1 = Math.PI; // sweep clockwise in screen space (y is down)
+  /**
+   * A ~270° arc with an arrowhead — a "this spins" cue around a motor pivot,
+   * drawn in the motor's actual spin direction (issue 12). `ccw` = the body
+   * turns counter-clockwise on screen (a positive/non-reversed motor); the arc
+   * sweeps that way and the arrowhead points along the travel direction.
+   */
+  function motorArc(p: Vec2, r: number, ccw: boolean): void {
+    const start = -Math.PI / 2; // top of the ring
+    const end = start + (ccw ? -1 : 1) * (1.5 * Math.PI); // 270°, signed by direction
     ctx.beginPath();
-    ctx.arc(p.x, p.y, r, a0, a1, false);
+    ctx.arc(p.x, p.y, r, start, end, ccw); // anticlockwise flag = ccw
     ctx.stroke();
-    const ex = p.x + r * Math.cos(a1);
-    const ey = p.y + r * Math.sin(a1);
-    const tx = Math.sin(a1); // unit tangent of the clockwise sweep at the end
-    const ty = -Math.cos(a1);
-    const h = 4;
+    // Tip at the swept end; travel tangent there points the way the arc is going.
+    const ex = p.x + r * Math.cos(end);
+    const ey = p.y + r * Math.sin(end);
+    const tx = ccw ? Math.sin(end) : -Math.sin(end);
+    const ty = ccw ? -Math.cos(end) : Math.cos(end);
+    const nx = -ty;
+    const ny = tx;
+    const h = 5;
     ctx.beginPath();
     ctx.moveTo(ex, ey);
-    ctx.lineTo(ex - (tx + ty) * h, ey - (ty - tx) * h);
+    ctx.lineTo(ex - tx * h + nx * h * 0.6, ey - ty * h + ny * h * 0.6);
     ctx.moveTo(ex, ey);
-    ctx.lineTo(ex - (tx - ty) * h, ey - (ty + tx) * h);
+    ctx.lineTo(ex - tx * h - nx * h * 0.6, ey - ty * h - ny * h * 0.6);
     ctx.stroke();
   }
+  /**
+   * Faint rest-length marker for a selected spring (issue 12): a dashed segment
+   * of the spring's natural length, centred on the live midpoint, with end
+   * ticks. The gap between the live endpoints and these ticks reads as how
+   * stretched (ticks inside) or compressed (ticks outside) the spring is.
+   */
+  function drawSpringRest(aw: Vec2, bw: Vec2, props: Props): void {
+    const rest = typeof props.restLength === "number" ? props.restLength : 0;
+    if (rest <= 0) return;
+    const dx = bw.x - aw.x;
+    const dy = bw.y - aw.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    const mx = (aw.x + bw.x) / 2;
+    const my = (aw.y + bw.y) / 2;
+    const half = rest / 2;
+    const e1 = worldToScreen(cam, { x: mx - ux * half, y: my - uy * half });
+    const e2 = worldToScreen(cam, { x: mx + ux * half, y: my + uy * half });
+    // Perpendicular in screen space, for the end ticks.
+    const sdx = e2.x - e1.x;
+    const sdy = e2.y - e1.y;
+    const slen = Math.hypot(sdx, sdy) || 1;
+    const nx = -sdy / slen;
+    const ny = sdx / slen;
+    const tick = 5;
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = connectorDef("spring").stroke;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    line(e1, e2);
+    ctx.setLineDash([]);
+    for (const e of [e1, e2]) {
+      line({ x: e.x - nx * tick, y: e.y - ny * tick }, { x: e.x + nx * tick, y: e.y + ny * tick });
+    }
+    ctx.restore();
+  }
+
   /** A zigzag coil between two screen points (deterministic — no shimmer). */
   function strokeSpring(a: Vec2, b: Vec2): void {
     const dx = b.x - a.x;
