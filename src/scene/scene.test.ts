@@ -4,6 +4,7 @@ import {
   addBody,
   removeBody,
   updateBody,
+  duplicateBody,
   updateRoomSettings,
   addConnector,
   removeConnector,
@@ -69,6 +70,46 @@ describe("removeBody", () => {
     s = removeBody(s, 0, b.id);
 
     expect(s.rooms[0].bodies.map((x) => x.id)).toEqual([a.id, c.id]);
+  });
+});
+
+describe("duplicateBody", () => {
+  it("clones a body into an independent copy with a fresh id at the given position", () => {
+    let s = createScene();
+    const a = addBody(s, 0, {
+      type: "ball",
+      position: { x: 1, y: 2 },
+      rotation: 0.3,
+      props: { radius: 0.7, friction: 0.4 },
+    });
+    s = a.scene;
+
+    const dup = duplicateBody(s, 0, a.id, { x: 4, y: 5 })!;
+    s = dup.scene;
+
+    const [orig, copy] = s.rooms[0].bodies;
+    expect(s.rooms[0].bodies).toHaveLength(2);
+    expect(copy.id).not.toBe(orig.id);
+    expect(copy.type).toBe("ball");
+    expect(copy.rotation).toBe(0.3);
+    expect(copy.position).toEqual({ x: 4, y: 5 });
+    expect(copy.props).toEqual({ radius: 0.7, friction: 0.4 });
+  });
+
+  it("deep-copies props so editing the copy does not touch the original", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 }));
+    s = a.scene;
+    const dup = duplicateBody(s, 0, a.id, { x: 1, y: 1 })!;
+    s = updateBody(dup.scene, 0, dup.id, { props: { radius: 99 } });
+
+    const orig = s.rooms[0].bodies.find((b) => b.id === a.id)!;
+    expect(orig.props.radius).not.toBe(99);
+  });
+
+  it("returns null for an unknown body id", () => {
+    const s = createScene();
+    expect(duplicateBody(s, 0, "nope", { x: 0, y: 0 })).toBeNull();
   });
 });
 

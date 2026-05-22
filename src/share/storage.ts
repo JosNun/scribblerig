@@ -18,7 +18,7 @@ import {
   sortByRecent,
   mostRecent,
 } from "./sessions";
-import { createScene, tracerScene, type Scene } from "../scene/scene";
+import { createScene, tracerScene, type Scene, type Body } from "../scene/scene";
 
 const SCENE_PREFIX = "scribblerig:scene:";
 const THUMB_PREFIX = "scribblerig:thumb:";
@@ -128,6 +128,23 @@ export function hasSharedScene(): boolean {
 /** A shareable link that encodes the scene in the URL fragment. */
 export function shareUrl(scene: Scene): string {
   return `${location.origin + location.pathname}#${encodeScene(scene)}`;
+}
+
+/**
+ * Share text carrying a single body, written to the system clipboard on copy so
+ * a duplicate can be pasted in another tab or app (issue 17). Reuses the scene
+ * codec — the body rides inside an otherwise-empty scene.
+ */
+export function bodyToShareText(body: Body): string {
+  const scene = createScene();
+  scene.rooms[0].bodies = [body];
+  return encodeScene(scene);
+}
+
+/** Recover a single body from share text written by {@link bodyToShareText}. */
+export function bodyFromShareText(text: string): Body | null {
+  const scene = decodeScene(text);
+  return scene?.rooms[0]?.bodies[0] ?? null;
 }
 
 // ----- internals -----

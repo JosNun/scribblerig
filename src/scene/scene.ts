@@ -171,6 +171,29 @@ export function updateBody(
   });
 }
 
+/**
+ * Clone a body into an independent copy at `position`, minting a fresh id (via
+ * {@link addBody}) and deep-copying its props so editing the copy never touches
+ * the original. Returns null if no body matches `id`. The shared core behind
+ * copy/paste, duplicate, and Alt-drag (issue 17). Connectors aren't cloned —
+ * a connector joins *two* bodies, so duplicating one body has no joint to copy.
+ */
+export function duplicateBody(
+  scene: Scene,
+  roomIndex: number,
+  id: string,
+  position: Vec2,
+): { scene: Scene; id: string } | null {
+  const src = scene.rooms[roomIndex].bodies.find((b) => b.id === id);
+  if (!src) return null;
+  return addBody(scene, roomIndex, {
+    type: src.type,
+    position,
+    rotation: src.rotation,
+    props: { ...src.props },
+  });
+}
+
 /** Append a connector to a room, minting a deterministic unique id. */
 export function addConnector(
   scene: Scene,

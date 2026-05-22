@@ -3,6 +3,7 @@ import { Drawer } from "vaul";
 import {
   addBody,
   updateBody,
+  duplicateBody,
   updateRoomSettings,
   addConnector,
   removeConnector,
@@ -10,6 +11,8 @@ import {
   removeBodyAndConnectors,
   isBodyEndpoint,
   type Scene,
+  type Body,
+  type Vec2,
   type BodyType,
   type ConnectorType,
   type RoomSettings,
@@ -19,6 +22,8 @@ import {
   hasSharedScene,
   saveSession,
   shareUrl,
+  bodyToShareText,
+  bodyFromShareText,
   listSessions,
   loadSession,
   adoptSession,
@@ -151,6 +156,15 @@ export default function App() {
   const sessionIdRef = useRef<string>(boot.id);
   const sceneRef = useRef<Scene>(boot.scene);
   const selectedRef = useRef<string | null>(null);
+  // Copy/paste/duplicate (issue 17). The in-app clipboard is a deep body
+  // snapshot — the permission-free primary source for paste; copy also writes
+  // share text to the system clipboard for cross-tab/external paste. The hover
+  // ref is the last world point under the cursor while over the canvas (null
+  // when off it), so paste can land at the pointer. The cascade counter steps
+  // successive off-pointer pastes/duplicates so they don't stack exactly.
+  const clipboardRef = useRef<Body | null>(null);
+  const hoverWorldRef = useRef<Vec2 | null>(null);
+  const cascadeRef = useRef(0);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const handleDragRef = useRef<HandleId | null>(null);
   // For click-cycling stacked objects: the pick list captured on pointerdown,
@@ -336,8 +350,21 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
-      if (!typing && (e.key === "Delete" || e.key === "Backspace")) deleteSelectedRef.current();
-      else if (e.key === "Escape") cancelConnectorRef.current();
+      const mod = e.metaKey || e.ctrlKey;
+      if (e.key === "Escape") {
+        cancelConnectorRef.current();
+      } else if (typing) {
+        return; // editing a property value — leave all other shortcuts inert
+      } else if (mod && (e.key === "c" || e.key === "C")) {
+        copyRef.current();
+      } else if (mod && (e.key === "v" || e.key === "V")) {
+        pasteRef.current();
+      } else if (mod && (e.key === "d" || e.key === "D")) {
+        e.preventDefault(); // don't trigger the browser's bookmark shortcut
+        duplicateRef.current();
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        deleteSelectedRef.current();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -524,6 +551,22 @@ export default function App() {
     const target = wasOnPick ? cur! : picks[0];
     select(target);
     const body = bodyById(target);
+    // Alt/Option-drag duplicates: leave the original in place and drag a fresh
+    // copy instead (issue 17). The clone starts at the original's position, so
+    // the drag offset — and the rest of the drag path — is identical.
+    if (body && e.altKey) {
+      const dup = duplicateBody(sceneRef.current, 0, target, body.position);
+      if (dup) {
+        sceneRef.current = dup.scene;
+        select(dup.id);
+        bump();
+        dragOffsetRef.current = { x: body.position.x - world.x, y: body.position.y - world.y };
+        // A fresh clone isn't part of the captured pick stack, so no cycling.
+        selectDownRef.current = { picks: [dup.id], id: dup.id, wasOnPick: false, x: e.clientX, y: e.clientY };
+        capture(canvasRef.current, e.pointerId);
+        return;
+      }
+    }
     if (body) {
       dragOffsetRef.current = { x: body.position.x - world.x, y: body.position.y - world.y };
     }
@@ -554,6 +597,7 @@ export default function App() {
 
     if (!building) return;
     const raw = worldAt(e);
+    hoverWorldRef.current = raw; // remember where the cursor is, so paste lands here
 
     if (connectorStartRef.current) {
       const end = snapEndpoint(sceneRef.current, 0, raw, ANCHOR_PX / cameraRef.current.scale);
@@ -706,6 +750,74 @@ export default function App() {
   };
   const deleteSelectedRef = useRef(deleteSelected);
   deleteSelectedRef.current = deleteSelected;
+
+  // ----- copy / paste / duplicate (issue 17) -----
+  /** Cascade step (meters) for off-pointer paste/duplicate so copies don't stack. */
+  const CASCADE = 0.5;
+
+  /** Add an independent copy of `snapshot` at `position` (clamped), and select it. */
+  const spawnClone = (snapshot: Pick<Body, "type" | "rotation" | "props">, position: Vec2) => {
+    const size = sceneRef.current.rooms[0].settings.size;
+    const added = addBody(sceneRef.current, 0, {
+      type: snapshot.type,
+      rotation: snapshot.rotation,
+      props: { ...snapshot.props },
+      position: clampInsideRoom(size, snapshot, position),
+    });
+    sceneRef.current = added.scene;
+    select(added.id);
+    bump();
+  };
+
+  /** A position offset down-right from `from` by the next cascade step. */
+  const cascadeFrom = (from: Vec2): Vec2 => {
+    const step = (cascadeRef.current += 1) * CASCADE;
+    return { x: from.x + step, y: from.y - step };
+  };
+
+  const copySelection = () => {
+    const id = selectedRef.current;
+    if (!building || !id) return;
+    const body = bodyById(id); // connectors aren't copyable yet (single-select)
+    if (!body) return;
+    clipboardRef.current = { ...body, position: { ...body.position }, props: { ...body.props } };
+    cascadeRef.current = 0;
+    // Also carry it on the system clipboard for cross-tab/external paste.
+    navigator.clipboard?.writeText(bodyToShareText(body)).catch(() => {});
+  };
+
+  const pasteClipboard = async () => {
+    if (!building) return;
+    let snapshot = clipboardRef.current;
+    if (!snapshot) {
+      // Nothing copied in this tab — fall back to the system clipboard.
+      try {
+        snapshot = bodyFromShareText(await navigator.clipboard.readText());
+      } catch {
+        snapshot = null;
+      }
+    }
+    if (!snapshot) return;
+    // At the pointer when it's over the canvas; otherwise cascade off the source.
+    const at = hoverWorldRef.current ?? cascadeFrom(snapshot.position);
+    spawnClone(snapshot, at);
+  };
+
+  /** Cmd/Ctrl+D and the mobile button: duplicate the current selection in place. */
+  const duplicateSelection = () => {
+    const id = selectedRef.current;
+    if (!building || !id) return;
+    const body = bodyById(id);
+    if (!body) return;
+    spawnClone(body, cascadeFrom(body.position));
+  };
+
+  const copyRef = useRef(copySelection);
+  copyRef.current = copySelection;
+  const pasteRef = useRef(pasteClipboard);
+  pasteRef.current = pasteClipboard;
+  const duplicateRef = useRef(duplicateSelection);
+  duplicateRef.current = duplicateSelection;
 
   const cancelConnector = () => {
     connectorStartRef.current = null;
@@ -955,6 +1067,7 @@ export default function App() {
 
   const actionsEls = (
     <>
+      <button className="icon-btn" onClick={duplicateSelection} disabled={!building || !selected || !bodyById(selected)} title="Duplicate"><Icon name="copy" /></button>
       <button className="icon-btn" onClick={deleteSelected} disabled={!building || !selected} title="Delete"><Icon name="delete" /></button>
       <label className="snap">
         <input type="checkbox" checked={snap} onChange={toggleSnap} disabled={!building} />
@@ -1076,6 +1189,7 @@ export default function App() {
         onPointerMove={onCanvasPointerMove}
         onPointerUp={onCanvasPointerUp}
         onPointerCancel={onCanvasPointerUp}
+        onPointerLeave={() => (hoverWorldRef.current = null)}
       />
 
       {/* Transport — floating top-center */}

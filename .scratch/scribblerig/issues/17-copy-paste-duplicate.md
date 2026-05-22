@@ -1,6 +1,6 @@
 # 17 — Copy / paste and alt-drag duplicate
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
