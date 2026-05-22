@@ -470,6 +470,86 @@ textarea {
   width: 100%;
 }
 
+/* ---------- Saved builds overlay ---------- */
+.builds-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(43, 43, 43, 0.25);
+}
+
+.builds-panel {
+  position: static;
+  transform: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  width: min(420px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.builds-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.builds-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.build-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: 1.5px dashed rgba(43, 43, 43, 0.25);
+  border-radius: 9px;
+}
+
+.build-row.current {
+  border-style: solid;
+  background: #f0e9d8;
+}
+
+.build-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  padding: 4px 6px;
+  border: 1.5px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.build-title:hover,
+.build-title:focus {
+  border-color: #2b2b2b;
+  background: #fff;
+}
+
+.build-time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.build-del {
+  padding: 6px 10px !important;
+  line-height: 1;
+}
+
 /* ---------- Coarse-pointer (touch) sizing ---------- */
 @media (pointer: coarse) {
   .panel button {

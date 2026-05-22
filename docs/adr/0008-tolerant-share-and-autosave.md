@@ -60,3 +60,26 @@ A pure **`share/codec`** module and a thin impure **`share/storage`** shell.
 - New runtime dependency: `pako` (deflate). Chosen over the platform
   `CompressionStream` because it is synchronous and works identically in the
   browser and in Vitest (Node), keeping the codec a simple pure round-trip.
+
+## Addendum — per-tab sessions (issue 18)
+
+The single autosave key was generalized so **each browser tab holds its own
+build** and past builds are browsable.
+
+- **Tab identity in `sessionStorage`** (`physics-sandbox:sid`) — per-tab and
+  reload-stable; a fresh tab has none and mints one.
+- **Per-session scenes** under `physics-sandbox:scene:<id>`, plus a
+  `physics-sandbox:sessions` index of `{ id, title, updatedAt }`. The old single
+  `physics-sandbox:scene` key is migrated into a session on first boot.
+- **`bootSession` precedence**: shared URL fragment (fresh session) → this tab's
+  own persisted session (stable reload) → **lazy fork of the most-recent build**.
+  The lazy fork shows the most-recent content under a new id but is *not* written
+  until the first edit, so glance-and-close tabs leave no clutter and edits never
+  clobber the source build. Autosave is therefore skipped until the first edit
+  (`revision > 0`).
+- **Pure vs. impure split** holds: index/title logic is the tested pure
+  `share/sessions`; `share/storage` is the thin localStorage/sessionStorage shell.
+- **Known edge**: localStorage is shared across tabs, so the session *index* is
+  last-write-wins if two tabs save at the same instant — acceptable since each
+  tab almost always touches only its own row. Camera stays local, so switching
+  builds never carries a viewport.

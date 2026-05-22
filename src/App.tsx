@@ -14,7 +14,19 @@ import {
   type ConnectorType,
   type RoomSettings,
 } from "./scene/scene";
-import { loadInitialScene, hasSharedScene, saveScene, shareUrl } from "./share/storage";
+import {
+  bootSession,
+  hasSharedScene,
+  saveSession,
+  shareUrl,
+  listSessions,
+  loadSession,
+  adoptSession,
+  newSession,
+  deleteSession,
+  renameSession,
+} from "./share/storage";
+import { type SessionMeta } from "./share/sessions";
 import { createClock, type Clock, type ClockState } from "./clock/clock";
 import { initSim, compile, type SimWorld, type BodyTransform } from "./sim/sim";
 import { type Camera, fitCamera, screenToWorld, zoomAt, panBy } from "./renderer/camera";
@@ -78,6 +90,17 @@ function capture(el: Element | null, pointerId: number) {
   }
 }
 
+/** Compact "time since" label for the builds list (e.g. "5m ago"). */
+function relTime(t: number): string {
+  const s = Math.round((Date.now() - t) / 1000);
+  if (s < 60) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
 /** Transforms straight from the design graph, for drawing in build mode. */
 function designTransforms(scene: Scene): Map<string, BodyTransform> {
   const m = new Map<string, BodyTransform>();
@@ -96,7 +119,12 @@ export default function App() {
   const clockRef = useRef<Clock>(createClock(FIXED_DT));
   const worldRef = useRef<SimWorld | null>(null);
 
-  const sceneRef = useRef<Scene>(loadInitialScene());
+  // Boot this tab's session once: shared link → own persisted session → a lazy
+  // fork of the most-recent build (see share/storage). `useState` lazy init runs
+  // bootSession exactly once.
+  const [boot] = useState(bootSession);
+  const sessionIdRef = useRef<string>(boot.id);
+  const sceneRef = useRef<Scene>(boot.scene);
   const selectedRef = useRef<string | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const handleDragRef = useRef<HandleId | null>(null);
@@ -136,6 +164,8 @@ export default function App() {
   const [revision, setRevision] = useState(0);
   const bump = () => setRevision((r) => r + 1);
   const [copied, setCopied] = useState(false);
+  // Builds list (saved sessions): null when closed, the snapshot list when open.
+  const [builds, setBuilds] = useState<SessionMeta[] | null>(null);
 
   // On narrow screens the panels collapse into a bottom sheet.
   const [mobile, setMobile] = useState(() =>
@@ -288,9 +318,12 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Autosave the design graph (debounced) so a refresh restores in-progress work.
+  // Autosave the design graph (debounced) so a refresh restores in-progress
+  // work. Skipped until the first edit (revision 0) so a lazily-forked new tab
+  // doesn't materialize a duplicate build just by being opened.
   useEffect(() => {
-    const t = setTimeout(() => saveScene(sceneRef.current), 500);
+    if (revision === 0) return;
+    const t = setTimeout(() => saveSession(sessionIdRef.current, sceneRef.current), 500);
     return () => clearTimeout(t);
   }, [revision]);
 
@@ -779,6 +812,44 @@ export default function App() {
     }
   };
 
+  // ----- saved builds (sessions) -----
+  const openBuilds = () => setBuilds(listSessions());
+  const refreshBuilds = () => setBuilds(listSessions());
+
+  /** Switch this tab to a scene, dropping to build mode and reframing. */
+  const adoptScene = (scene: Scene) => {
+    reset();
+    sceneRef.current = scene;
+    select(null);
+    fitView();
+    setBuilds(null);
+  };
+
+  const openBuild = (id: string) => {
+    const scene = loadSession(id);
+    if (!scene) return;
+    adoptSession(id);
+    sessionIdRef.current = id;
+    adoptScene(scene);
+    bump(); // re-render; marks this build most-recent on the next autosave
+  };
+
+  const startNewBuild = () => {
+    const fresh = newSession();
+    sessionIdRef.current = fresh.id;
+    adoptScene(fresh.scene); // stays lazy (no bump) until the first edit
+  };
+
+  const removeBuild = (id: string) => {
+    deleteSession(id);
+    refreshBuilds();
+  };
+
+  const renameBuild = (id: string, title: string) => {
+    renameSession(id, title);
+    setBuilds((list) => list && list.map((s) => (s.id === id ? { ...s, title } : s)));
+  };
+
   // ----- shared panel fragments, rendered into either layout -----
   const paletteEls = (
     <>
@@ -861,6 +932,7 @@ export default function App() {
       <button onClick={copyLink} title="Copy a shareable link to this build">
         <Icon name="link" /> {copied ? "Copied!" : "Copy link"}
       </button>
+      <button onClick={openBuilds} title="Browse your saved builds">Builds</button>
     </>
   );
 
@@ -916,6 +988,43 @@ export default function App() {
         <RoomSettingsPanel settings={roomSettings} onChange={onRoomChange} />
       )
     )
+  );
+
+  const buildsEl = builds && (
+    <div className="builds-overlay" onPointerDown={() => setBuilds(null)}>
+      <div className="builds-panel panel" onPointerDown={(e) => e.stopPropagation()}>
+        <div className="builds-head">
+          <span className="prop-title">Builds</span>
+          <button onClick={startNewBuild}>+ New build</button>
+        </div>
+        {builds.length === 0 ? (
+          <div className="prop-empty">No saved builds yet.</div>
+        ) : (
+          <ul className="builds-list">
+            {builds.map((s) => {
+              const current = s.id === sessionIdRef.current;
+              return (
+                <li key={s.id} className={`build-row${current ? " current" : ""}`}>
+                  <input
+                    className="build-title"
+                    value={s.title}
+                    onChange={(e) => renameBuild(s.id, e.target.value)}
+                    aria-label="Build name"
+                  />
+                  <span className="build-time">{relTime(s.updatedAt)}</span>
+                  <button onClick={() => openBuild(s.id)} disabled={current}>
+                    {current ? "Current" : "Open"}
+                  </button>
+                  <button className="build-del" onClick={() => removeBuild(s.id)} title="Delete build">
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 
   return (
@@ -992,6 +1101,9 @@ export default function App() {
           {rightPanelEl}
         </>
       )}
+
+      {/* Saved-builds list (overlay), opened from the actions row. */}
+      {buildsEl}
 
       {/* Drag ghost following the cursor, sized to the body's true scale. */}
       {ghost && (
