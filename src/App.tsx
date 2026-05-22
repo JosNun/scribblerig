@@ -127,7 +127,7 @@ function renderThumbnail(scene: Scene): string | null {
     canvas.width = Math.round(width * scale);
     canvas.height = Math.round(height * scale);
     const cam = fitCamera(width, height, canvas.width, canvas.height, 1.04);
-    createRenderer(canvas, cam).draw(scene, designTransforms(scene), null, undefined);
+    createRenderer(canvas, cam, { grid: false }).draw(scene, designTransforms(scene), null, undefined);
     return canvas.toDataURL("image/png");
   } catch {
     return null;
@@ -957,7 +957,7 @@ export default function App() {
         Grid snap
       </label>
       <button onClick={copyLink} title="Copy a shareable link to this build">
-        <Icon name="link" /> {copied ? "Copied!" : "Copy link"}
+        <Icon name="link" /> {copied ? "Copied!" : "Share"}
       </button>
       <button onClick={openBuilds} title="Browse your saved builds">Builds</button>
     </>

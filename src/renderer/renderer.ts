@@ -53,7 +53,9 @@ const SELECT_COLOR = "#1f7a3d";
 export function createRenderer(
   canvas: HTMLCanvasElement,
   initialCamera: Camera,
+  options: { grid?: boolean } = {},
 ): Renderer {
+  const showGrid = options.grid !== false; // on by default; off for thumbnails
   const ctx = canvas.getContext("2d")!;
   const rc = rough.canvas(canvas);
   let cam = initialCamera;
@@ -80,7 +82,7 @@ export function createRenderer(
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const room = scene.rooms[0];
 
-      drawGrid();
+      if (showGrid) drawGrid();
       drawRoomFrame(room.settings.size);
       drawWalls(room.settings.walls, room.settings.size);
 
