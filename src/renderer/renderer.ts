@@ -30,6 +30,27 @@ const WALL_THICKNESS = 0.5; // meters; mirrors the floor collider in sim
 const INK = "#2b2b2b";
 const FLOOR_FILL = "#9b8466";
 
+/**
+ * Hachure/cross-hatch fill spacing & line thickness, expressed in **world
+ * meters** so the fill is painted onto the body and scales with it on zoom
+ * (issue 20). Rough.js defaults are fixed pixels, which makes the fill "swim"
+ * relative to the shape as the camera scale changes. These values reproduce
+ * Rough's default look (gap ≈ 8px, weight ≈ 1px) at the typical fit zoom
+ * (~55 px/m for a 12 m room). The pixel floor keeps the fill from vanishing
+ * when zoomed far out.
+ */
+const FILL_GAP_WORLD = 0.15;
+const FILL_WEIGHT_WORLD = 0.018;
+const FILL_WEIGHT_MIN_PX = 0.6;
+
+/** Fill sizing options (gap/weight) locked to world space at the given scale. */
+function worldFillOptions(scale: number): { hachureGap: number; fillWeight: number } {
+  return {
+    hachureGap: FILL_GAP_WORLD * scale,
+    fillWeight: Math.max(FILL_WEIGHT_WORLD * scale, FILL_WEIGHT_MIN_PX),
+  };
+}
+
 /** Dot-grid spacing in meters (matches the editor snap grid). */
 const GRID_SIZE = 0.5;
 const GRID_DOT = "rgba(43, 43, 43, 0.13)";
@@ -325,6 +346,7 @@ export function createRenderer(
           strokeWidth: 2,
           roughness: 1.4,
           seed,
+          ...worldFillOptions(cam.scale),
         }),
       );
       rc.draw(drawable);
@@ -431,6 +453,7 @@ export function createRenderer(
         strokeWidth: 2,
         roughness: 1.4,
         seed: 1,
+        ...worldFillOptions(cam.scale),
       }),
     );
     rc.draw(drawable);

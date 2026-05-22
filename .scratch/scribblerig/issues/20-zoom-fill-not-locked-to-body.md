@@ -1,6 +1,6 @@
 # 20 — Hachure fill swims when zooming (not locked to the body)
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
