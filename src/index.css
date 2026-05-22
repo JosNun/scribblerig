@@ -36,17 +36,14 @@ textarea {
   inset: 0;
 }
 
-/* Full-screen room with a subtle dot-grid paper texture (the canvas clears to
-   transparent each frame, so this shows through behind the scene) */
+/* Full-screen paper. The dot grid is drawn on the canvas (under the camera) so
+   it pans and zooms with the scene; only the paper colour lives here. */
 .stage {
   position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
   background-color: #fdf6e3;
-  background-image: radial-gradient(circle, rgba(43, 43, 43, 0.13) 1.1px, transparent 1.2px);
-  background-size: 26px 26px;
-  background-position: center;
   touch-action: none;
 }
 

@@ -15,7 +15,7 @@ import { isBodyEndpoint } from "../scene/scene";
 import type { BodyTransform } from "../sim/sim";
 import { def, connectorDef, type Props, type Shape } from "../registry/registry";
 import { bodyHandles, bodyToWorld } from "../editor/editor";
-import { type Camera, worldToScreen } from "./camera";
+import { type Camera, worldToScreen, screenToWorld } from "./camera";
 
 /** Transient draw-time overlay for the connector-draw interaction. */
 export interface DrawOverlay {
@@ -29,6 +29,13 @@ const WALL_THICKNESS = 0.5; // meters; mirrors the floor collider in sim
 
 const INK = "#2b2b2b";
 const FLOOR_FILL = "#9b8466";
+
+/** Dot-grid spacing in meters (matches the editor snap grid). */
+const GRID_SIZE = 0.5;
+const GRID_DOT = "rgba(43, 43, 43, 0.13)";
+/** Below this on-screen spacing the grid is just noise, so skip it (and the
+ *  dot count would balloon when zoomed far out). */
+const GRID_MIN_SPACING_PX = 7;
 
 export interface Renderer {
   draw(
@@ -73,6 +80,7 @@ export function createRenderer(
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const room = scene.rooms[0];
 
+      drawGrid();
       drawRoomFrame(room.settings.size);
       drawWalls(room.settings.walls, room.settings.size);
 
@@ -321,6 +329,36 @@ export function createRenderer(
     const h = shape.halfHeight * 2 * cam.scale;
     // Rough.rectangle takes the top-left corner; offset so it's centered.
     return rc.generator.rectangle(-w / 2, -h / 2, w, h, options);
+  }
+
+  /**
+   * Dot grid drawn on the canvas under the camera (not a CSS background), so it
+   * pans and zooms pixel-for-pixel with the scene — graph paper the scene sits
+   * on. Dots land on world multiples of GRID_SIZE (the snap grid). Skipped when
+   * too dense to read (also bounds the dot count when zoomed far out).
+   */
+  function drawGrid(): void {
+    const spacing = GRID_SIZE * cam.scale;
+    if (spacing < GRID_MIN_SPACING_PX) return;
+    // Visible world bounds (corners), expanded to whole grid steps.
+    const tl = screenToWorld(cam, { x: 0, y: 0 });
+    const br = screenToWorld(cam, { x: canvas.width, y: canvas.height });
+    const i0 = Math.floor(Math.min(tl.x, br.x) / GRID_SIZE);
+    const i1 = Math.ceil(Math.max(tl.x, br.x) / GRID_SIZE);
+    const j0 = Math.floor(Math.min(tl.y, br.y) / GRID_SIZE);
+    const j1 = Math.ceil(Math.max(tl.y, br.y) / GRID_SIZE);
+
+    ctx.fillStyle = GRID_DOT;
+    ctx.beginPath();
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) {
+        const p = worldToScreen(cam, { x: i * GRID_SIZE, y: j * GRID_SIZE });
+        // A ~2px square reads the same as a dot at this size and is far cheaper
+        // than an arc when there are thousands of them.
+        ctx.rect(p.x - 1, p.y - 1, 2, 2);
+      }
+    }
+    ctx.fill();
   }
 
   /**
