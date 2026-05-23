@@ -280,10 +280,10 @@ textarea {
   background: #fff;
 }
 
-.prop-row input[type="range"] {
+.prop-row .scrubber {
   grid-column: 2;
-  width: 100%;
-  accent-color: #2b2b2b;
+  justify-self: stretch;
+  /* Intrinsic width from the SVG attribute; column 2 expands to fit. */
 }
 
 .prop-row.toggle {
@@ -334,18 +334,64 @@ textarea {
   gap: 4px;
 }
 
-.dial {
+/* ---- Doodle controls (issue 09) ---- */
+.scrubber {
+  cursor: ew-resize;
+  touch-action: none;
+  outline: none;
+  display: block;
+}
+.scrubber:focus-visible {
+  outline: 1.5px dashed #2b2b2b;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.doodle-dial {
   cursor: grab;
   touch-action: none;
+  outline: none;
+  display: block;
 }
-
-.dial:active {
+.doodle-dial:active {
   cursor: grabbing;
 }
-
-.dial.disabled {
+.doodle-dial.disabled {
   opacity: 0.4;
   pointer-events: none;
+}
+.doodle-dial:focus-visible {
+  outline: 1.5px dashed #2b2b2b;
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+
+/* Doodle checkbox: the SVG is the visual; an invisible real <input> overlays
+   it so click, keyboard (Space), and screen readers all work natively. */
+.doodle-check {
+  position: relative;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.doodle-check__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.doodle-check__svg {
+  pointer-events: none;
+  display: block;
+}
+.doodle-check__input:focus-visible + .doodle-check__svg {
+  outline: 1.5px dashed #2b2b2b;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Drag ghost following the cursor. Scale/opacity are transitioned so it pops

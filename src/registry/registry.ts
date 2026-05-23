@@ -37,7 +37,16 @@ export interface NamedAnchor {
 export interface PropField {
   key: string;
   label: string;
-  kind: "number" | "boolean";
+  /**
+   * Control to render. Each kind is rendered by a dedicated doodle control in
+   * the property panel — no per-type code outside the panel itself.
+   *
+   *  - `number`  — typeable box + scrubber (min/max/step optional).
+   *  - `boolean` — sketchy checkbox.
+   *  - `angle`   — doodle dial; value is degrees in [0, 360), 0° = down,
+   *               increasing CCW (the canvas convention).
+   */
+  kind: "number" | "boolean" | "angle";
   min?: number;
   max?: number;
   step?: number;

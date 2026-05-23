@@ -1,10 +1,18 @@
 import type { PropField, Props } from "../registry/registry";
+import { DoodleCheckbox } from "./DoodleCheckbox";
+import { DoodleDial } from "./DoodleDial";
+import { NumberScrubber } from "./NumberScrubber";
 
 /**
  * Generic property editor: one control per schema field, used for both body and
- * connector properties. Numeric fields get a slider *and* a number box (type a
- * precise value); fields with `help` get a `?` tooltip. Adding a field to a
- * schema surfaces it here with no change to this component.
+ * connector properties.
+ *
+ *  - **number** fields render a typeable number box + a doodle scrubber (see
+ *    `NumberScrubber`).
+ *  - **boolean** fields render a checkbox.
+ *
+ * Fields with `help` get a `?` tooltip. Adding a field to a schema surfaces it
+ * here with no change to this component.
  */
 export function PropertyPanel({
   title,
@@ -37,22 +45,37 @@ export function PropertyPanel({
         if (f.kind === "boolean") {
           return (
             <label key={f.key} className="prop-row toggle">
-              <input
-                type="checkbox"
+              <DoodleCheckbox
                 checked={value === true}
-                onChange={(e) => onChange({ [f.key]: e.target.checked })}
+                onChange={(next) => onChange({ [f.key]: next })}
               />
               {label}
             </label>
           );
         }
 
+        if (f.kind === "angle") {
+          const deg = typeof value === "number" ? value : 0;
+          return (
+            <div key={f.key} className="prop-row dial-row">
+              {label}
+              <DoodleDial
+                value={deg}
+                onChange={(next) => onChange({ [f.key]: next })}
+                label={f.label}
+              />
+              <span className="prop-val">{Math.round(deg)}°</span>
+            </div>
+          );
+        }
+
         const num = typeof value === "number" ? value : 0;
+        const min = f.min ?? -Infinity;
+        const max = f.max ?? Infinity;
+        const step = f.step ?? 0.01;
         const commit = (raw: number) => {
           if (Number.isNaN(raw)) return;
-          const lo = f.min ?? -Infinity;
-          const hi = f.max ?? Infinity;
-          onChange({ [f.key]: Math.min(hi, Math.max(lo, raw)) });
+          onChange({ [f.key]: Math.min(max, Math.max(min, raw)) });
         };
         return (
           <div key={f.key} className="prop-row">
@@ -66,13 +89,13 @@ export function PropertyPanel({
               value={num}
               onChange={(e) => commit(parseFloat(e.target.value))}
             />
-            <input
-              type="range"
-              min={f.min}
-              max={f.max}
-              step={f.step}
+            <NumberScrubber
               value={num}
-              onChange={(e) => commit(parseFloat(e.target.value))}
+              min={Number.isFinite(min) ? min : 0}
+              max={Number.isFinite(max) ? max : 1}
+              step={step}
+              onChange={commit}
+              label={f.label}
             />
           </div>
         );
