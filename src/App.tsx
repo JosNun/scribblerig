@@ -192,7 +192,7 @@ export default function App() {
   // Desktop drag-to-pan with the middle mouse button (last canvas px).
   const panDragRef = useRef<{ x: number; y: number } | null>(null);
   // Palette collapse driven by the drawer's live position (see trackExpand).
-  const stripRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLDivElement | null>(null);
   const expandRunningRef = useRef(false);
   const expandReleaseRef = useRef<number | null>(null);
 
@@ -925,37 +925,27 @@ export default function App() {
     bump();
   };
 
-  // Mobile palette drag-to-place. Items have `touch-action: none` so iOS
-  // Safari can't engage its native horizontal-scroll engine on a touch that
-  // starts on a tile (which was silently eating the upward pointer stream
-  // and breaking drag-to-place). We disambiguate horizontal vs vertical
-  // intent ourselves: sideways drags scroll the strip via `scrollLeft`,
-  // upward drags lift a shape onto the canvas. Capture is deferred until
-  // commit, so a tap (no move) still passes through as a tap.
+  // Mobile palette drag-to-place. The strip is natively pan-x scrollable
+  // (touch-action: pan-x), but iOS would commit to native horizontal pan as
+  // soon as a touch starts on a tile — silently swallowing any subsequent
+  // upward motion. To rescue the upward intent we attach a non-passive
+  // touchmove listener (see the useEffect just below) that calls
+  // preventDefault the moment vertical movement is detected, claiming the
+  // gesture back from iOS before native scroll commits. Horizontal swipes
+  // are left untouched, so native scroll handles them as before.
   const mobileDragStartRef = useRef<{ x: number; y: number; type: BodyType } | null>(null);
-  const stripScrollRef = useRef<{ lastX: number } | null>(null);
   const onStripDown = (type: BodyType) => (e: React.PointerEvent) => {
     if (!building) return;
     mobileDragStartRef.current = { x: e.clientX, y: e.clientY, type };
   };
   const onStripMove = (e: React.PointerEvent) => {
-    // Once we're scrolling the strip, route every move to that until lift.
-    if (stripScrollRef.current && stripRef.current) {
-      stripRef.current.scrollLeft -= e.clientX - stripScrollRef.current.lastX;
-      stripScrollRef.current.lastX = e.clientX;
-      return;
-    }
     const start = mobileDragStartRef.current;
     if (!start) return;
     if (!placingRef.current) {
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
-      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 6) {
-        // Sideways: drive the strip's scrollLeft from JS (since the items
-        // have touch-action: none and iOS won't do it for us).
-        stripScrollRef.current = { lastX: e.clientX };
-        mobileDragStartRef.current = null;
-        capture(e.currentTarget as HTMLElement, e.pointerId);
+      if (Math.abs(dx) > Math.abs(dy)) {
+        mobileDragStartRef.current = null; // sideways → let native scroll
         return;
       }
       if (dy > -10) return; // wait for a deliberate upward lift
@@ -969,7 +959,6 @@ export default function App() {
   const onStripUp = (e: React.PointerEvent) => {
     const type = placingRef.current;
     mobileDragStartRef.current = null;
-    stripScrollRef.current = null;
     placingRef.current = null;
     draggedOffRef.current = false;
     setGhost(null);
@@ -989,10 +978,57 @@ export default function App() {
   };
   const onStripCancel = () => {
     mobileDragStartRef.current = null;
-    stripScrollRef.current = null;
     placingRef.current = null;
     draggedOffRef.current = false;
     setGhost(null);
+  };
+
+  // Non-passive touchmove listener so we can preventDefault on vertical
+  // intent. React event props attach passively for touch events, which on
+  // iOS lets the browser commit to native pan-x scroll before our handlers
+  // can react — and once committed, the rest of the upward gesture is
+  // silently absorbed. We attach directly with `{ passive: false }` so we
+  // can call preventDefault on the first vertical-dominant move, yanking
+  // the gesture back to JS in time for onStripMove to drive the place.
+  //
+  // Critically this uses a *callback ref* rather than useEffect+stripRef,
+  // because the strip-row lives inside a vaul Drawer.Portal that mounts
+  // asynchronously — a useEffect with [] deps fires before the portal's
+  // children land in the DOM, so the ref is still null and the listeners
+  // would never attach. The callback fires the moment React commits the
+  // node, no matter how the parent portal handles its children.
+  const stripDetachRef = useRef<(() => void) | null>(null);
+  const attachStrip = (el: HTMLDivElement | null) => {
+    stripDetachRef.current?.();
+    stripDetachRef.current = null;
+    stripRef.current = el;
+    if (!el) return;
+    let startX = 0;
+    let startY = 0;
+    let decided = false;
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      decided = false;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (decided || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - startX;
+      const dy = e.touches[0].clientY - startY;
+      if (Math.abs(dy) >= Math.abs(dx) && Math.abs(dy) > 6) {
+        e.preventDefault();
+        decided = true;
+      } else if (Math.abs(dx) > 6) {
+        decided = true;
+      }
+    };
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    stripDetachRef.current = () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+    };
   };
 
   const onRoomChange = (patch: Partial<RoomSettings>) => {
@@ -1287,7 +1323,7 @@ export default function App() {
               {/* One scroll container: the palette scrolls off the top as the
                   properties scroll down. The palette fades while expanded. */}
               <div className="drawer-scroll">
-                <div ref={stripRef} className="strip-row" aria-disabled={!building}>
+                <div ref={attachStrip} className="strip-row" aria-disabled={!building}>
                   {mobilePaletteEls}
                 </div>
                 <div className="drawer-props">
