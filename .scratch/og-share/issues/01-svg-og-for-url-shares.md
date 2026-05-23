@@ -146,11 +146,23 @@ preview. Issue 02 builds the shortlink layer on top.
 - Add `main: "src/worker/index.ts"`.
 - Keep the existing `assets` binding (probably named `ASSETS`) if it
   already exists from prior work; add it if not.
-- Do **not** add `run_worker_first: true` — the worker already
-  short-circuits static assets explicitly. Setting `run_worker_first`
-  *and* short-circuiting works but is belt-and-suspenders; pick one. The
-  earlier sketch chose `run_worker_first`; here we choose explicit
-  routing because it's cheaper to read.
+- **Set `assets.run_worker_first: true`.** Without this flag,
+  Cloudflare's asset router serves any path that matches a built asset
+  *before* the worker ever runs. The root path `/` matches `index.html`,
+  so without `run_worker_first` the OG-meta injection branch for
+  `/?s=ENC` is silently bypassed (the asset router returns `index.html`
+  with `cf-cache-status: HIT` and the worker never sees the request).
+  Verified in production deploy — without the flag, `GET /?s=ENC` has
+  zero `og:` meta in the response; with the flag, all twelve `og:*` /
+  `twitter:*` tags appear as designed. The worker's own
+  `STATIC_PREFIXES` check (in `src/worker/index.ts`) still delegates
+  `/assets/*` back to `env.ASSETS.fetch` for the fast path on hashed
+  bundles.
+
+  An earlier draft of this issue said "do not add `run_worker_first` —
+  the worker short-circuits static assets explicitly." That was wrong:
+  the short-circuit only matters if the worker actually runs. Fixed in
+  the deploy that landed with `run_worker_first: true`.
 
 ## Acceptance criteria
 

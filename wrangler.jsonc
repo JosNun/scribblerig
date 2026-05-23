@@ -1,34 +1,42 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "scribblerig",
-  "compatibility_date": "2026-05-22",
-  "main": "src/worker/index.ts",
-  "observability": {
-    "enabled": true
-  },
-  "assets": {
-    // Defining `binding` makes the assets fetcher available to the worker
-    // as `env.ASSETS`. The worker short-circuits static-asset prefixes
-    // straight to this binding (see `src/worker/index.ts`).
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
-  },
-  // KV namespace holding shortlink rows: key = 10-char base62 ID, value =
-  // JSON-encoded { sceneEnc, title?, createdAt }. Plus per-IP rate-limit
-  // counters under `rate:<ip>`. See og-share PRD + ADR-0010.
-  //
-  // The `id`s below must be provisioned with `wrangler kv namespace create
-  // SHARES` (and `… --preview`) and pasted in before deploying. Until
-  // then, leave them as the placeholder strings — `wrangler dev --local`
-  // will still simulate the namespace in-memory.
-  "kv_namespaces": [
-    {
-      "binding": "SHARES",
-      "id": "PLACEHOLDER_PROD_NAMESPACE_ID",
-      "preview_id": "PLACEHOLDER_PREVIEW_NAMESPACE_ID"
-    }
-  ],
-  "compatibility_flags": [
-    "nodejs_compat"
-  ]
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "scribblerig",
+	"compatibility_date": "2026-05-22",
+	"main": "src/worker/index.ts",
+	"observability": {
+		"enabled": true
+	},
+	"assets": {
+		// Defining `binding` makes the assets fetcher available to the worker
+		// as `env.ASSETS`. The worker short-circuits static-asset prefixes
+		// straight to this binding (see `src/worker/index.ts`).
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		// IMPORTANT: without this, Cloudflare serves any path that matches an
+		// asset (including `/` → index.html) directly from the asset router
+		// and the worker never runs — so `/?s=ENC` would skip OG meta
+		// injection. With `run_worker_first: true`, the worker sees every
+		// request; the worker's own STATIC_PREFIXES check (in
+		// src/worker/index.ts) explicitly delegates `/assets/*` back to
+		// env.ASSETS.fetch so we still get the fast path for hashed bundles.
+		"run_worker_first": true
+	},
+	// KV namespace holding shortlink rows: key = 10-char base62 ID, value =
+	// JSON-encoded { sceneEnc, title?, createdAt }. Plus per-IP rate-limit
+	// counters under `rate:<ip>`. See og-share PRD + ADR-0010.
+	//
+	// The `id`s below must be provisioned with `wrangler kv namespace create
+	// SHARES` (and `… --preview`) and pasted in before deploying. Until
+	// then, leave them as the placeholder strings — `wrangler dev --local`
+	// will still simulate the namespace in-memory.
+	"kv_namespaces": [
+		{
+			"binding": "SHARES",
+			"id": "5c8a91d071c5430c865f2f687e7efa3e",
+			"preview_id": "947315ecfefe437ab26c808792b4e83c"
+		}
+	],
+	"compatibility_flags": [
+		"nodejs_compat"
+	]
 }
