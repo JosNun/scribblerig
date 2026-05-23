@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import rough from "roughjs";
 import type { RoughGenerator } from "roughjs/bin/generator";
-import { RoughGroup } from "./rough-react";
+import { RoughGroup, useInstanceSeed } from "./rough-react";
 
 const INK = "#2b2b2b";
 const ACCENT = "#1f7a3d";
@@ -46,6 +46,7 @@ export function DoodleDial({
   const reach = faceRadius - 2;
 
   const gen: RoughGenerator = useMemo(() => rough.generator(), []);
+  const seed = useInstanceSeed();
 
   // Dial face — a hand-drawn paper-fill disc.
   const faceDrawable = useMemo(
@@ -57,9 +58,9 @@ export function DoodleDial({
         fillStyle: "solid",
         roughness: 1.5,
         bowing: 1.4,
-        seed: 31,
+        seed: seed + 31,
       }),
-    [gen, r, faceRadius],
+    [gen, r, faceRadius, seed],
   );
 
   // Cardinal tick marks at 0/90/180/270 — same convention as the dial value.
@@ -75,10 +76,10 @@ export function DoodleDial({
           stroke: INK,
           strokeWidth: 1.3,
           roughness: 1.5,
-          seed: 40 + i,
+          seed: seed + 40 + i,
         });
       }),
-    [gen, r, faceRadius],
+    [gen, r, faceRadius, seed],
   );
 
   // Arrow stem — drawn pointing **down** at zero rotation. We rotate the whole
@@ -90,9 +91,9 @@ export function DoodleDial({
         strokeWidth: 2.6,
         roughness: 1.3,
         bowing: 1.2,
-        seed: 17,
+        seed: seed + 17,
       }),
-    [gen, r, reach],
+    [gen, r, reach, seed],
   );
 
   // Tip blob — a small accent-coloured circle at the end of the arm. Drawn at
@@ -105,9 +106,9 @@ export function DoodleDial({
         fill: ACCENT,
         fillStyle: "solid",
         roughness: 1.1,
-        seed: 23,
+        seed: seed + 23,
       }),
-    [gen, r, reach],
+    [gen, r, reach, seed],
   );
 
   // Center pivot — a tiny ink dot.
@@ -119,9 +120,9 @@ export function DoodleDial({
         fill: INK,
         fillStyle: "solid",
         roughness: 0.7,
-        seed: 19,
+        seed: seed + 19,
       }),
-    [gen, r],
+    [gen, r, seed],
   );
 
   // SVG rotate is clockwise-positive in screen coords. Our angle convention is

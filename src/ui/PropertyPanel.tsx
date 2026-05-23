@@ -1,4 +1,5 @@
-import type { PropField, Props } from "../registry/registry";
+import type { PanelItem, PropField, Props } from "../registry/registry";
+import { DoodleBorder } from "./DoodleBorder";
 import { DoodleCheckbox } from "./DoodleCheckbox";
 import { DoodleDial } from "./DoodleDial";
 import { NumberScrubber } from "./NumberScrubber";
@@ -21,15 +22,25 @@ export function PropertyPanel({
   onChange,
 }: {
   title: string;
-  schema: PropField[];
+  schema: PanelItem[];
   props: Props;
   onChange: (patch: Props) => void;
 }) {
+  const fieldCount = schema.filter((s) => s.kind !== "section").length;
   return (
     <div className="panel properties">
+      <DoodleBorder strokeWidth={2.5} />
       <div className="prop-title">{title}</div>
-      {schema.length === 0 && <div className="prop-empty">No adjustable properties.</div>}
-      {schema.map((f) => {
+      {fieldCount === 0 && <div className="prop-empty">No adjustable properties.</div>}
+      {schema.map((item, i) => {
+        if (item.kind === "section") {
+          return (
+            <div key={`section-${i}-${item.label}`} className="prop-subtitle">
+              {item.label}
+            </div>
+          );
+        }
+        const f: PropField = item;
         const value = props[f.key];
         const label = (
           <span className="prop-label">
@@ -80,15 +91,18 @@ export function PropertyPanel({
         return (
           <div key={f.key} className="prop-row">
             {label}
-            <input
-              type="number"
-              className="prop-num"
-              min={f.min}
-              max={f.max}
-              step={f.step}
-              value={num}
-              onChange={(e) => commit(parseFloat(e.target.value))}
-            />
+            <span className="num-frame">
+              <DoodleBorder strokeWidth={1.8} />
+              <input
+                type="number"
+                className="prop-num"
+                min={f.min}
+                max={f.max}
+                step={f.step}
+                value={num}
+                onChange={(e) => commit(parseFloat(e.target.value))}
+              />
+            </span>
             <NumberScrubber
               value={num}
               min={Number.isFinite(min) ? min : 0}

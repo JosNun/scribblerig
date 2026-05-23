@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Props, PropField } from "../registry/registry";
+import type { PanelItem, Props } from "../registry/registry";
 import type { RoomSettings, Vec2 } from "../scene/scene";
 import { PropertyPanel } from "./PropertyPanel";
 
@@ -29,7 +29,8 @@ function gravityVec(strength: number, deg: number): Vec2 {
  * strength (otherwise the angle would snap back to 0 when strength→0 makes the
  * vector collapse).
  */
-const ROOM_SCHEMA: PropField[] = [
+const ROOM_SCHEMA: PanelItem[] = [
+  { kind: "section", label: "Gravity" },
   {
     key: "gravityStrength",
     label: "Gravity",
@@ -45,10 +46,21 @@ const ROOM_SCHEMA: PropField[] = [
     kind: "angle",
     help: "Which way gravity pulls. 0° is straight down.",
   },
+  { kind: "section", label: "Walls" },
   { key: "wallFloor", label: "Floor", kind: "boolean" },
   { key: "wallCeiling", label: "Ceiling", kind: "boolean" },
   { key: "wallLeft", label: "Left wall", kind: "boolean" },
   { key: "wallRight", label: "Right wall", kind: "boolean" },
+  // Placement isn't a physics setting — it affects how you *place* things in
+  // build mode, not what the simulation does. Separated so the distinction is
+  // visible at a glance.
+  { kind: "section", label: "Placement" },
+  {
+    key: "snap",
+    label: "Grid snap",
+    kind: "boolean",
+    help: "When on, bodies snap to the grid as you drag them in or move them around.",
+  },
 ];
 
 export function RoomSettingsPanel({
@@ -68,6 +80,7 @@ export function RoomSettingsPanel({
     wallCeiling: settings.walls.ceiling,
     wallLeft: settings.walls.left,
     wallRight: settings.walls.right,
+    snap: settings.snap,
   };
 
   const handlePatch = (patch: Props) => {
@@ -76,6 +89,10 @@ export function RoomSettingsPanel({
       const a = (patch.gravityDirection as number | undefined) ?? props.gravityDirection as number;
       if (patch.gravityDirection !== undefined) setAngle(a);
       onChange({ gravity: gravityVec(s, a) });
+      return;
+    }
+    if ("snap" in patch) {
+      onChange({ snap: patch.snap as boolean });
       return;
     }
     const wallKey = Object.keys(patch).find((k) => k.startsWith("wall"));

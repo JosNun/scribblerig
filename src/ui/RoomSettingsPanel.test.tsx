@@ -45,17 +45,15 @@ describe("RoomSettingsPanel", () => {
     expect(html).toMatch(/class="doodle-dial"[^>]*aria-valuenow="90"/);
   });
 
-  it("renders each wall as a doodle checkbox reflecting its on/off state", () => {
+  it("renders each wall + grid snap as a doodle checkbox reflecting its on/off state", () => {
     const html = renderToStaticMarkup(
       <RoomSettingsPanel settings={baseSettings} onChange={() => {}} />,
     );
-    // Four wall booleans → four doodle checkboxes (one per row).
+    // Four wall booleans + the grid-snap boolean → five doodle checkboxes.
     const matches = html.match(/class="doodle-check"/g) ?? [];
-    expect(matches.length).toBe(4);
-    // floor: true → checked; ceiling: false → unchecked; left: false; right: true.
-    // Easiest is to count `checked=""` occurrences for the inputs in the panel.
-    // Strength + direction are not checkboxes, so checkboxes only come from
-    // the wall fields.
+    expect(matches.length).toBe(5);
+    // floor: true → checked; ceiling: false → unchecked; left: false; right: true;
+    // snap: false (default in baseSettings) → unchecked. Two checked total.
     const checks = html.match(/class="doodle-check__input"[^>]*checked/g) ?? [];
     expect(checks.length).toBe(2); // floor + right
   });
@@ -65,5 +63,31 @@ describe("RoomSettingsPanel", () => {
       <RoomSettingsPanel settings={baseSettings} onChange={() => {}} />,
     );
     expect(html).toContain(">Room<");
+  });
+
+  it("renders the grid-snap toggle under a Placement section", () => {
+    const html = renderToStaticMarkup(
+      <RoomSettingsPanel settings={baseSettings} onChange={() => {}} />,
+    );
+    // Section headers exist for Gravity / Walls / Placement.
+    expect(html).toContain(">Gravity<");
+    expect(html).toContain(">Walls<");
+    expect(html).toContain(">Placement<");
+    // The grid-snap field renders as a doodle checkbox (boolean kind).
+    // baseSettings.snap is false → no `checked` on the snap input.
+    expect(html).toContain(">Grid snap<");
+  });
+
+  it("reflects the current snap state in the doodle checkbox", () => {
+    const html = renderToStaticMarkup(
+      <RoomSettingsPanel
+        settings={{ ...baseSettings, snap: true }}
+        onChange={() => {}}
+      />,
+    );
+    // With snap=true *and* floor=true *and* right=true, three boolean
+    // checkboxes should be checked.
+    const checks = html.match(/class="doodle-check__input"[^>]*checked/g) ?? [];
+    expect(checks.length).toBe(3);
   });
 });

@@ -47,16 +47,17 @@ textarea {
   touch-action: none;
 }
 
-/* Floating panels overlaid on the stage */
+/* Floating panels overlaid on the stage. The doodle frame is painted by a
+   <DoodleBorder /> sibling positioned absolutely behind the panel content;
+   the panel itself has no CSS border. */
 .panel {
   position: fixed;
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: rgba(255, 253, 247, 0.92);
-  border: 2.5px solid #2b2b2b;
   border-radius: 14px;
   box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.15);
   backdrop-filter: blur(2px);
@@ -78,10 +79,12 @@ textarea {
 }
 
 /* The Delete button lives in the mobile drawer, outside any `.panel`, so it
-   carries the doodle button chrome itself to match the transport buttons. */
+   carries the doodle button chrome itself to match the transport buttons.
+   Doodle border is painted by a <DoodleBorder /> child; no CSS border. */
 .icon-btn {
+  position: relative;
   color: #2b2b2b;
-  border: 2px solid #2b2b2b;
+  border: none;
   border-radius: 9px;
   background: transparent;
   cursor: pointer;
@@ -98,25 +101,34 @@ textarea {
   transform: translateX(-50%);
 }
 
-.panel button {
+/* All doodle buttons — inside a panel on desktop, OR in the mobile drawer's
+   sheet-actions strip. Match so Share / Builds / Duplicate / Delete all read
+   as the same control vocabulary, regardless of where they live. */
+.panel button,
+.sheet-actions button {
+  position: relative;
   font: inherit;
   color: #2b2b2b;
   padding: 6px 12px;
-  border: 2px solid #2b2b2b;
+  border: none;
   border-radius: 9px;
   background: transparent;
   cursor: pointer;
-  transition: background 0.12s ease;
+  min-height: 40px;
+  /* iOS Safari draws a default rounded background on bare <button>s; kill it. */
+  -webkit-appearance: none;
+  appearance: none;
 }
 
-.panel button:hover:not(:disabled) {
-  background: rgba(240, 233, 216, 0.7);
+.sheet-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-/* Icon-bearing buttons (transport, Delete) center their glyph both axes.
-   `.icon-btn` is listed explicitly because the Delete button lives in the
-   mobile drawer, outside any `.panel`. */
-.panel button:has(> .icon),
+/* Center contents both axes — applied to every doodle button so icon-only,
+   text-only, and icon+text buttons all read consistent. */
+.panel button,
+.sheet-actions button,
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -216,13 +228,6 @@ textarea {
   pointer-events: none;
 }
 
-.snap {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-}
-
 .tip {
   font-size: 13px;
   opacity: 0.6;
@@ -269,15 +274,32 @@ textarea {
   gap: 6px;
 }
 
-.prop-num {
+/* Wrapper for the number input so a <DoodleBorder /> can sit behind it.
+   The bare <input> can't host children. */
+.num-frame {
   grid-column: 1;
+  position: relative;
+  display: inline-block;
   width: 60px;
+}
+.num-frame .prop-num {
+  width: 100%;
   font: inherit;
   font-size: 13px;
-  padding: 2px 4px;
-  border: 1.5px solid #2b2b2b;
+  padding: 4px 6px;
+  border: none;
   border-radius: 6px;
-  background: #fff;
+  background: transparent;
+  /* iOS Safari paints a default light-grey border on text/number inputs that
+     ignores `border: none`; -webkit-appearance kills it. */
+  -webkit-appearance: none;
+  appearance: none;
+  color: #2b2b2b;
+  position: relative;
+  z-index: 1;
+}
+.num-frame .prop-num:focus {
+  outline: none;
 }
 
 .prop-row .scrubber {
@@ -332,6 +354,38 @@ textarea {
   flex-direction: column;
   align-items: center;
   gap: 4px;
+}
+
+/* ---- Doodle border: sibling SVG that paints a Rough rectangle over the
+   parent (panel, button, input). Parent must be `position: relative` (or
+   `position: fixed`, like .panel). */
+.doodle-border__anchor {
+  display: none;
+}
+.doodle-border {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Interactive border (used on buttons): when the parent is `:active`,
+   thicken the strokes. The drawable itself doesn't regenerate, so the
+   wobble stays stable — only line weight changes. */
+*:active > .doodle-border.interactive path {
+  stroke-width: 3.2 !important;
+}
+
+/* Anything wrapping a DoodleBorder needs its content to sit above the
+   absolute-positioned SVG. Direct children of a panel (other than the border
+   itself and its placeholder anchor) get bumped above. */
+.panel > *:not(.doodle-border):not(.doodle-border__anchor),
+.num-frame > .prop-num,
+button > .icon,
+button > span:not(.doodle-border__anchor),
+.icon-btn > .icon {
+  position: relative;
+  z-index: 1;
 }
 
 /* ---- Doodle controls (issue 09) ---- */
@@ -535,12 +589,31 @@ textarea {
   flex-wrap: wrap;
 }
 
-/* Panels embedded in the drawer drop their floating positioning. */
+/* Panels embedded in the drawer drop their floating positioning, but stay
+   `position: relative` so the doodle-border SVG inside still has a positioning
+   context (otherwise its `inset: 0` finds the drawer / viewport, not the
+   panel, and the frame lands in the wrong place).
+   The top/right/etc. resets are critical — `position: relative` makes the
+   desktop classes' offsets (`.properties { top: 50%; right: 16px; ... }`)
+   actually take effect, which would shove the panel down and to the left.
+   Resetting them to `auto` neutralises that and lets the panel sit in
+   normal drawer flow. */
 .drawer .panel {
-  position: static;
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
   transform: none;
   box-shadow: none;
   backdrop-filter: none;
+}
+
+/* Action buttons live in `.sheet-actions` on mobile, NOT inside a `.panel`,
+   so the `.panel button { position: relative }` rule misses them. Match them
+   directly so their doodle border lands correctly. */
+.sheet-actions button {
+  position: relative;
 }
 
 .drawer .properties {

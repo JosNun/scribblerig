@@ -1,7 +1,22 @@
+import { useState } from "react";
 import type { Drawable } from "roughjs/bin/core";
 import type { RoughGenerator } from "roughjs/bin/generator";
 
 const INK = "#2b2b2b";
+
+/**
+ * Stable per-instance random seed for Rough.js drawables. Stored once at
+ * mount via `useState`'s lazy initialiser, so two instances of the same
+ * control rendered side-by-side don't share a wobble. Pass the returned
+ * number into `gen.<shape>(…, { seed })`.
+ *
+ * Stability: the seed is fixed for the component's lifetime; the drawable
+ * only re-rolls when something *else* in its memoization key changes
+ * (e.g. size). Matches the PRD's "no shimmer" rule.
+ */
+export function useInstanceSeed(): number {
+  return useState(() => Math.floor(Math.random() * 1_000_000))[0];
+}
 
 /**
  * Renders a Rough.js `Drawable` as a group of React `<path>` elements based on

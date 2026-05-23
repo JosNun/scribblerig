@@ -54,6 +54,19 @@ export interface PropField {
   help?: string;
 }
 
+/**
+ * Visual divider inside a property panel — a subtitle that groups the fields
+ * below it into a named section. Doesn't bind to any prop; purely structural.
+ * Mixed into the schema array as a sibling of `PropField`.
+ */
+export interface SectionField {
+  kind: "section";
+  label: string;
+}
+
+/** Anything that can appear in a property panel's schema array. */
+export type PanelItem = PropField | SectionField;
+
 export interface BodyTypeDef {
   type: BodyType;
   /** Display name for the palette. */

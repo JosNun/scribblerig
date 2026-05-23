@@ -62,6 +62,7 @@ import {
 import { snap as snapEndpoint, endpointOf, type SnapResult } from "./snapping/snapping";
 import { BodyPreview } from "./ui/BodyPreview";
 import { ConnectorPreview } from "./ui/ConnectorPreview";
+import { DoodleBorder } from "./ui/DoodleBorder";
 import { Icon } from "./ui/Icon";
 import { PropertyPanel } from "./ui/PropertyPanel";
 import { RoomSettingsPanel } from "./ui/RoomSettingsPanel";
@@ -266,7 +267,6 @@ export default function App() {
   const building = state === "build";
   const room = sceneRef.current.rooms[0];
   const roomSettings = room.settings;
-  const snap = roomSettings.snap;
   const selectedBody = selected ? (room.bodies.find((b) => b.id === selected) ?? null) : null;
   const selectedConnector = selected ? (room.connectors.find((c) => c.id === selected) ?? null) : null;
   const snapOn = () => sceneRef.current.rooms[0].settings.snap;
@@ -1035,7 +1035,6 @@ export default function App() {
     sceneRef.current = updateRoomSettings(sceneRef.current, 0, patch);
     bump();
   };
-  const toggleSnap = () => onRoomChange({ snap: !snapOn() });
 
   // Copy a shareable link (the scene encoded in the URL fragment) to the
   // clipboard, falling back to a prompt where clipboard access is blocked.
@@ -1165,16 +1164,12 @@ export default function App() {
 
   const actionsEls = (
     <>
-      <button className="icon-btn" onClick={duplicateSelection} disabled={!building || !selected || !bodyById(selected)} title="Duplicate"><Icon name="copy" /></button>
-      <button className="icon-btn" onClick={deleteSelected} disabled={!building || !selected} title="Delete"><Icon name="delete" /></button>
-      <label className="snap">
-        <input type="checkbox" checked={snap} onChange={toggleSnap} disabled={!building} />
-        Grid snap
-      </label>
+      <button className="icon-btn" onClick={duplicateSelection} disabled={!building || !selected || !bodyById(selected)} title="Duplicate"><DoodleBorder interactive /><Icon name="copy" /></button>
+      <button className="icon-btn" onClick={deleteSelected} disabled={!building || !selected} title="Delete"><DoodleBorder interactive /><Icon name="delete" /></button>
       <button onClick={copyLink} title="Copy a shareable link to this build">
-        <Icon name="link" /> {copied ? "Copied!" : "Share"}
+        <DoodleBorder interactive /><Icon name="link" /> <span>{copied ? "Copied!" : "Share"}</span>
       </button>
-      <button onClick={openBuilds} title="Browse your saved builds">Builds</button>
+      <button onClick={openBuilds} title="Browse your saved builds"><DoodleBorder interactive /><span>Builds</span></button>
     </>
   );
 
@@ -1292,10 +1287,11 @@ export default function App() {
 
       {/* Transport — floating top-center */}
       <div className="panel transport">
-        <button onClick={play} disabled={!ready || state === "running"} title="Play"><Icon name="play" /></button>
-        <button onClick={pause} disabled={!ready || state !== "running"} title="Pause"><Icon name="pause" /></button>
-        <button onClick={reset} disabled={!ready || state === "build"} title="Reset"><Icon name="reset" /></button>
-        <button onClick={fitView} disabled={!ready} title="Fit view to room"><Icon name="fit" /></button>
+        <DoodleBorder strokeWidth={2.5} />
+        <button onClick={play} disabled={!ready || state === "running"} title="Play"><DoodleBorder interactive /><Icon name="play" /></button>
+        <button onClick={pause} disabled={!ready || state !== "running"} title="Pause"><DoodleBorder interactive /><Icon name="pause" /></button>
+        <button onClick={reset} disabled={!ready || state === "build"} title="Reset"><DoodleBorder interactive /><Icon name="reset" /></button>
+        <button onClick={fitView} disabled={!ready} title="Fit view to room"><DoodleBorder interactive /><Icon name="fit" /></button>
         <span className="state">{ready ? state : "loading…"}</span>
       </div>
 
@@ -1339,11 +1335,13 @@ export default function App() {
         <>
           {/* Palette — floating left: drag a body in; click a connector to draw it */}
           <div className="panel palette" aria-disabled={!building}>
+            <DoodleBorder strokeWidth={2.5} />
             {paletteEls}
           </div>
 
           {/* Contextual actions — floating bottom-center */}
           <div className="panel actions">
+            <DoodleBorder strokeWidth={2.5} />
             {actionsEls}
             <span className="tip">{tipText}</span>
           </div>

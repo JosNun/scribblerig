@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import rough from "roughjs";
 import type { RoughGenerator } from "roughjs/bin/generator";
-import { RoughGroup } from "./rough-react";
+import { RoughGroup, useInstanceSeed } from "./rough-react";
 
 const INK = "#2b2b2b";
 
@@ -28,19 +28,23 @@ export function DoodleCheckbox({
   const SIZE = 20;
   const PAD = 2.5;
   const gen: RoughGenerator = useMemo(() => rough.generator(), []);
+  // Per-instance seeds so two checkboxes side-by-side don't have identical
+  // wobble (would otherwise look mass-produced rather than hand-drawn).
+  const boxSeed = useInstanceSeed();
+  const checkSeed = useInstanceSeed();
 
   const boxDrawable = useMemo(
     () =>
       gen.rectangle(PAD, PAD, SIZE - PAD * 2, SIZE - PAD * 2, {
+        // Transparent — let the paper colour show through, matching the
+        // doodle frames on panels and number boxes.
         stroke: INK,
         strokeWidth: 2,
-        fill: "#fff",
-        fillStyle: "solid",
         roughness: 1.5,
         bowing: 1.4,
-        seed: 11,
+        seed: boxSeed,
       }),
-    [gen],
+    [gen, boxSeed],
   );
 
   // Two-segment check path: down-right then up-right. Rough.js wobbles the
@@ -52,9 +56,9 @@ export function DoodleCheckbox({
         strokeWidth: 2.4,
         roughness: 1.4,
         bowing: 2,
-        seed: 5,
+        seed: checkSeed,
       }),
-    [gen],
+    [gen, checkSeed],
   );
 
   return (

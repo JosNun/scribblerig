@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import rough from "roughjs";
 import type { RoughGenerator } from "roughjs/bin/generator";
-import { RoughGroup } from "./rough-react";
+import { RoughGroup, useInstanceSeed } from "./rough-react";
 
 const INK = "#2b2b2b";
 
@@ -48,6 +48,9 @@ export function NumberScrubber({
   const trackLen = trackRight - trackLeft;
 
   const gen: RoughGenerator = useMemo(() => rough.generator(), []);
+  // Per-instance seeds so multiple scrubbers in one panel (e.g. ball's four
+  // numeric props) don't all share the same wobble.
+  const seed = useInstanceSeed();
 
   // The track: one Rough line spanning the visible track. Memoized by geometry
   // so the wobble is fixed for the lifetime of the control's size.
@@ -58,9 +61,9 @@ export function NumberScrubber({
         strokeWidth: 2.5,
         roughness: 1.5,
         bowing: 1.4,
-        seed: 13,
+        seed,
       }),
-    [gen, trackLeft, trackRight, trackY],
+    [gen, trackLeft, trackRight, trackY, seed],
   );
 
   // The knob: a hachure-filled doodle disc drawn at the origin; an outer
@@ -80,9 +83,9 @@ export function NumberScrubber({
         hachureGap: 2.6,
         hachureAngle: -45,
         roughness: 0.9,
-        seed: 7,
+        seed: seed + 7,
       }),
-    [gen],
+    [gen, seed],
   );
 
   // Tick marks at min, mid, max — drawn with Rough so they share the
@@ -96,10 +99,10 @@ export function NumberScrubber({
         strokeWidth: 1.4,
         roughness: 1.8,
         bowing: 1.6,
-        seed: 20 + i * 3,
+        seed: seed + 20 + i * 3,
       }),
     );
-  }, [gen, trackLeft, trackRight, trackLen, trackY]);
+  }, [gen, trackLeft, trackRight, trackLen, trackY, seed]);
 
   const t = (value - min) / (max - min);
   const knobX = trackLeft + Math.max(0, Math.min(1, t)) * trackLen;
