@@ -1,6 +1,6 @@
 # 01 — SVG OG previews for URL-shared scenes
 
-Status: ready
+Status: done
 
 ## Parent
 

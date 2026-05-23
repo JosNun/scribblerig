@@ -1,6 +1,6 @@
 # 02 — Named scenes with KV shortlinks
 
-Status: ready
+Status: done
 
 ## Parent
 
@@ -167,9 +167,14 @@ curl -s http://127.0.0.1:8788/s/$ID/og.svg > /tmp/s.svg
 
 ## Notes
 
-- KV namespace IDs (fill in when provisioned):
-  - Production: `<TODO>`
-  - Preview: `<TODO>`
+- KV namespace IDs (fill in before deploying — see `wrangler.jsonc`):
+  - Production: `PLACEHOLDER_PROD_NAMESPACE_ID` — replace with the
+    output of `bunx wrangler kv namespace create SHARES`.
+  - Preview: `PLACEHOLDER_PREVIEW_NAMESPACE_ID` — replace with the
+    output of `bunx wrangler kv namespace create SHARES --preview`.
+  - `wrangler dev --local` (the default) simulates the namespace
+    in-memory without needing real IDs, so local smoke testing works
+    with the placeholders.
 - Cost: 1 write per share button click that names a scene + ~10 writes
   per IP per minute for the rate counter. Cloudflare free tier is 1k
   writes/day — plenty for hobby load.

@@ -1,6 +1,6 @@
 # 03 — Share popover with naming UI
 
-Status: ready
+Status: done
 
 ## Parent
 

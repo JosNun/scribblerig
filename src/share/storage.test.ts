@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   encodedLength,
+  sceneFromInlineDataText,
   sceneFromUrl,
   strippedUrl,
 } from "./storage";
@@ -74,6 +75,36 @@ describe("strippedUrl", () => {
   it("leaves a URL without share payload unchanged", () => {
     expect(strippedUrl("https://example.com/path?other=1")).toBe("/path?other=1");
     expect(strippedUrl("https://example.com/path")).toBe("/path");
+  });
+});
+
+describe("sceneFromInlineDataText", () => {
+  it("decodes a scene from the inline og-data blob", () => {
+    const enc = encodeScene(sample());
+    const out = sceneFromInlineDataText(JSON.stringify({ sceneEnc: enc }));
+    expect(out).toBeTruthy();
+  });
+
+  it("returns null on missing or empty text", () => {
+    expect(sceneFromInlineDataText(null)).toBeNull();
+    expect(sceneFromInlineDataText("")).toBeNull();
+  });
+
+  it("returns null when the JSON has no sceneEnc field", () => {
+    expect(sceneFromInlineDataText("{}")).toBeNull();
+    expect(sceneFromInlineDataText(JSON.stringify({ other: "x" }))).toBeNull();
+  });
+
+  it("returns null on malformed JSON", () => {
+    expect(sceneFromInlineDataText("not json {")).toBeNull();
+  });
+
+  it("returns null when sceneEnc is not a string", () => {
+    expect(sceneFromInlineDataText(JSON.stringify({ sceneEnc: 42 }))).toBeNull();
+  });
+
+  it("returns null when sceneEnc fails to decode", () => {
+    expect(sceneFromInlineDataText(JSON.stringify({ sceneEnc: "not-a-real-payload" }))).toBeNull();
   });
 });
 

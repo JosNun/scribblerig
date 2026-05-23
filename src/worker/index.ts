@@ -12,14 +12,31 @@
  * [ADR-0010](docs/adr/0010-shortlinks-and-worker-og.md).
  */
 
-import { decodeScene } from "../share/codec";
+import { decodeScene, sanitizeTitle } from "../share/codec";
 import { renderSceneToSvg } from "../og/renderSvg";
 import { deriveTitle } from "../og/deriveTitle";
 import type { Scene } from "../scene/scene";
+import { nextShortlinkId } from "./id";
 
 export interface Env {
   /** Static assets binding from `wrangler.jsonc`'s `assets` field. */
   ASSETS: Fetcher;
+  /**
+   * KV namespace holding shortlink rows. Key = 10-char base62 ID, value =
+   * JSON-encoded {@link ShortlinkRow}. Bound via `[[kv_namespaces]]` in
+   * `wrangler.jsonc`. See og-share issue 02 + ADR-0010.
+   */
+  SHARES: KVNamespace;
+}
+
+/** What we persist per shortlink. */
+export interface ShortlinkRow {
+  /** Base64url-encoded scene blob — same payload as the `?s=` URL form. */
+  sceneEnc: string;
+  /** Optional sanitised title, falls back to `deriveTitle(scene)` at render. */
+  title?: string;
+  /** ms since epoch when the shortlink was minted. */
+  createdAt: number;
 }
 
 /** Path prefixes that bypass the worker entirely. */
@@ -28,6 +45,15 @@ const STATIC_PREFIXES = ["/assets/"];
 const SHARE_PARAM = "s";
 
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
+
+/** Per-IP rate-limit window for `POST /api/share`, in seconds. */
+const RATE_WINDOW_SECONDS = 60;
+/** Max `POST /api/share` requests per IP per window. Above this → 429. */
+const RATE_LIMIT = 10;
+/** Largest accepted base64url payload for a single share (bytes). */
+const MAX_SCENE_ENC_LENGTH = 64 * 1024;
+/** base64url character set — for validating incoming `sceneEnc`. */
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -49,9 +75,24 @@ export default {
       return handleRootShare(url, env, request);
     }
 
-    // TODO (OG-7): POST /api/share    → mint a shortlink (KV write + rate limit).
-    // TODO (OG-8): GET /s/<id>        → KV.get + HTMLRewriter inject + inline scene.
-    // TODO (OG-8): GET /s/<id>/og.svg → KV.get + render SVG.
+    // POST /api/share — mint a shortlink row for a named (or oversized)
+    // scene. Rate-limited per IP.
+    if (url.pathname === "/api/share" && request.method === "POST") {
+      return handleMintShortlink(request, env);
+    }
+
+    // GET /s/<id>/og.svg — render the SVG OG image for a stored shortlink.
+    const ogSvgMatch = url.pathname.match(/^\/s\/([A-Za-z0-9]+)\/og\.svg$/);
+    if (ogSvgMatch) {
+      return handleShortlinkOgSvg(ogSvgMatch[1], env);
+    }
+
+    // GET /s/<id> — serve the SPA HTML with og:* meta + an inline scene
+    // blob so the SPA can hydrate without a second round trip.
+    const shortlinkMatch = url.pathname.match(/^\/s\/([A-Za-z0-9]+)$/);
+    if (shortlinkMatch) {
+      return handleShortlinkHtml(shortlinkMatch[1], url, env, request);
+    }
 
     // Everything else passes through to the SPA's static assets so the app
     // still boots for unmatched routes. The `single-page-application` not-
@@ -128,6 +169,217 @@ async function handleRootShare(url: URL, env: Env, request: Request): Promise<Re
       "content-type": indexResp.headers.get("content-type") ?? "text/html; charset=utf-8",
     },
   });
+}
+
+/**
+ * `POST /api/share` — accept an encoded scene + optional title, rate-limit
+ * by IP, mint a 10-char shortlink ID, write the row to KV, return the
+ * absolute share URL.
+ *
+ * Request body: `{ sceneEnc: string; title?: string }`.
+ * Response: `{ id: string; url: string }`. 429 over rate limit. 400 on bad
+ * input. 500 on the astronomically-unlikely persistent ID collision.
+ */
+async function handleMintShortlink(request: Request, env: Env): Promise<Response> {
+  const ip = request.headers.get("cf-connecting-ip") ?? "anonymous";
+  if (await isRateLimited(env.SHARES, ip)) {
+    return json({ error: "Too many shares — slow down" }, {
+      status: 429,
+      headers: { "retry-after": String(RATE_WINDOW_SECONDS) },
+    });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Body must be JSON" }, { status: 400 });
+  }
+  const parsed = parseShareBody(body);
+  if (!parsed.ok) return json({ error: parsed.error }, { status: 400 });
+
+  // Try once to mint a fresh ID, then retry once more if KV says it's
+  // taken. With a 10-char base62 alphabet the second collision is
+  // vanishingly unlikely, so 500 after two strikes is fine.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const id = nextShortlinkId();
+    const existing = await env.SHARES.get(id);
+    if (existing) continue;
+    const row: ShortlinkRow = {
+      sceneEnc: parsed.value.sceneEnc,
+      ...(parsed.value.title ? { title: parsed.value.title } : {}),
+      createdAt: Date.now(),
+    };
+    await env.SHARES.put(id, JSON.stringify(row));
+    const url = new URL(request.url);
+    return json({ id, url: `${url.origin}/s/${id}` }, { status: 201 });
+  }
+  return json({ error: "Could not mint shortlink — try again" }, { status: 500 });
+}
+
+/**
+ * Validate the POST /api/share body. Returns either the cleaned payload
+ * (with title sanitised through the same path as `scene.title`) or an
+ * error string suitable for a 400 response.
+ */
+type ParsedShare =
+  | { ok: true; value: { sceneEnc: string; title?: string } }
+  | { ok: false; error: string };
+export function parseShareBody(body: unknown): ParsedShare {
+  if (typeof body !== "object" || body === null) {
+    return { ok: false, error: "Body must be a JSON object" };
+  }
+  const b = body as Record<string, unknown>;
+  const sceneEnc = b.sceneEnc;
+  if (typeof sceneEnc !== "string" || sceneEnc.length === 0) {
+    return { ok: false, error: "Missing sceneEnc" };
+  }
+  if (sceneEnc.length > MAX_SCENE_ENC_LENGTH) {
+    return { ok: false, error: "sceneEnc too large" };
+  }
+  if (!BASE64URL.test(sceneEnc)) {
+    return { ok: false, error: "sceneEnc has invalid characters" };
+  }
+  // sanitizeTitle handles non-strings, control chars, length cap, etc.
+  const title = sanitizeTitle(b.title);
+  return { ok: true, value: { sceneEnc, ...(title ? { title } : {}) } };
+}
+
+/**
+ * Per-IP rate limit using a KV counter with a 60-second TTL. Eventually
+ * consistent — a determined attacker can briefly burst, but the counter
+ * catches up across regions within a few seconds. Sufficient for v1's
+ * spam control.
+ */
+async function isRateLimited(kv: KVNamespace, ip: string): Promise<boolean> {
+  const key = `rate:${ip}`;
+  const raw = await kv.get(key);
+  const count = raw ? parseInt(raw, 10) || 0 : 0;
+  if (count >= RATE_LIMIT) return true;
+  await kv.put(key, String(count + 1), { expirationTtl: RATE_WINDOW_SECONDS });
+  return false;
+}
+
+/**
+ * Look up a stored shortlink and render its OG SVG. Same immutable cache
+ * policy as `/og.svg?s=…`. 404 if the ID is unknown.
+ */
+async function handleShortlinkOgSvg(id: string, env: Env): Promise<Response> {
+  const row = await readShortlinkRow(env.SHARES, id);
+  if (!row) return new Response("Not found", { status: 404 });
+  const scene = decodeScene(row.sceneEnc);
+  if (!scene) return new Response("Could not decode stored scene", { status: 500 });
+  const svg = renderSceneToSvg(scene);
+  return new Response(svg, {
+    headers: {
+      "content-type": "image/svg+xml; charset=utf-8",
+      "cache-control": IMMUTABLE_CACHE,
+    },
+  });
+}
+
+/**
+ * Look up a stored shortlink, fetch index.html via the assets binding,
+ * and splice in both:
+ *  - the `og:*` / `twitter:*` meta tags (so crawlers see a preview),
+ *  - a `<script type="application/json" id="og-data">` carrying the
+ *    encoded scene (so the SPA can hydrate without a second round trip).
+ *
+ * 404 if the ID is unknown. Immutable cache once we have a hit — stored
+ * shortlinks are forever-frozen in v1 (ADR-0010).
+ */
+async function handleShortlinkHtml(
+  id: string,
+  url: URL,
+  env: Env,
+  request: Request,
+): Promise<Response> {
+  const row = await readShortlinkRow(env.SHARES, id);
+  if (!row) return new Response("Shortlink not found", { status: 404 });
+
+  const scene = decodeScene(row.sceneEnc);
+  if (!scene) {
+    return new Response("Could not decode stored scene", { status: 500 });
+  }
+
+  // Override scene.title with the stored title (if any) so the OG meta
+  // uses the explicit name even if it didn't ride in the encoded blob.
+  if (row.title) scene.title = row.title;
+
+  const indexResp = await env.ASSETS.fetch(new Request(new URL("/", url).toString(), request));
+  if (!indexResp.ok) return indexResp;
+
+  const html = await indexResp.text();
+  const meta = buildShortlinkMeta(scene, url, id);
+  const dataScript = buildOgDataScript(row.sceneEnc);
+  const merged = injectMetaIntoHead(html, meta + dataScript);
+  return new Response(merged, {
+    status: indexResp.status,
+    headers: {
+      "content-type": indexResp.headers.get("content-type") ?? "text/html; charset=utf-8",
+      "cache-control": IMMUTABLE_CACHE,
+    },
+  });
+}
+
+/**
+ * Meta tags for `/s/<id>` — same shape as `buildOgMeta` but with the
+ * canonical URL pointing at the shortlink rather than the `?s=` form.
+ */
+export function buildShortlinkMeta(scene: Scene, requestUrl: URL, id: string): string {
+  const title = (scene.title && scene.title.trim()) || deriveTitle(scene);
+  const description = `${title} — a ScribbleRig build.`;
+  const og = `${requestUrl.origin}/s/${id}/og.svg`;
+  const canonical = `${requestUrl.origin}/s/${id}`;
+  return [
+    `<meta property="og:title" content="${esc(title)}">`,
+    `<meta property="og:description" content="${esc(description)}">`,
+    `<meta property="og:image" content="${esc(og)}">`,
+    `<meta property="og:image:type" content="image/svg+xml">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
+    `<meta property="og:url" content="${esc(canonical)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${esc(title)}">`,
+    `<meta name="twitter:description" content="${esc(description)}">`,
+    `<meta name="twitter:image" content="${esc(og)}">`,
+  ].join("");
+}
+
+/**
+ * Build the inline `<script id="og-data" type="application/json">` blob
+ * the SPA reads on boot. Carries the encoded scene so opening `/s/<id>`
+ * costs one round trip rather than two (no separate scene fetch).
+ *
+ * The blob is JSON-encoded and escaped against `</script>` — pure
+ * defence in depth, since `sceneEnc` is base64url and can't contain `<`.
+ */
+export function buildOgDataScript(sceneEnc: string): string {
+  const payload = JSON.stringify({ sceneEnc }).replace(/<\/script/gi, "<\\/script");
+  return `<script type="application/json" id="og-data">${payload}</script>`;
+}
+
+/** Read + parse a `ShortlinkRow` from KV, or null if missing / malformed. */
+async function readShortlinkRow(
+  kv: KVNamespace,
+  id: string,
+): Promise<ShortlinkRow | null> {
+  const raw = await kv.get(id);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as ShortlinkRow;
+    if (typeof parsed.sceneEnc !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function json(payload: unknown, init: ResponseInit = {}): Response {
+  const headers = new Headers(init.headers);
+  headers.set("content-type", "application/json; charset=utf-8");
+  return new Response(JSON.stringify(payload), { ...init, headers });
 }
 
 /**

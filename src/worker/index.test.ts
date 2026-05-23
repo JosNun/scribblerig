@@ -1,8 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
-import worker, { buildOgMeta, injectMetaIntoHead, isStaticAsset, type Env } from "./index";
+import worker, {
+  buildOgDataScript,
+  buildOgMeta,
+  buildShortlinkMeta,
+  injectMetaIntoHead,
+  isStaticAsset,
+  parseShareBody,
+  type Env,
+  type ShortlinkRow,
+} from "./index";
 import { encodeScene } from "../share/codec";
 import { addBody, createScene, type Scene } from "../scene/scene";
 import { makeBody } from "../registry/registry";
+
+/**
+ * Tiny in-memory `KVNamespace` shim. We implement only the methods the
+ * worker calls — anything else throws so a future call gets caught loudly
+ * by the test runner rather than silently returning undefined.
+ */
+function makeMockKV(): KVNamespace {
+  const store = new Map<string, { value: string; expiresAt?: number }>();
+  const now = () => Date.now();
+  const live = (key: string) => {
+    const entry = store.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt && entry.expiresAt < now()) {
+      store.delete(key);
+      return null;
+    }
+    return entry;
+  };
+  // Cast through unknown so the structural mock satisfies the full
+  // KVNamespace type without us implementing list/getWithMetadata/etc.
+  return {
+    async get(key: string) {
+      return live(key)?.value ?? null;
+    },
+    async put(key: string, value: string, opts?: { expirationTtl?: number }) {
+      const expiresAt = opts?.expirationTtl ? now() + opts.expirationTtl * 1000 : undefined;
+      store.set(key, { value, expiresAt });
+    },
+    async delete(key: string) {
+      store.delete(key);
+    },
+  } as unknown as KVNamespace;
+}
 
 function sampleScene(title?: string): Scene {
   let s = createScene();
@@ -20,9 +62,20 @@ function makeEnvWithIndexHtml(html: string) {
     return new Response("asset:" + url.pathname);
   });
   return {
-    env: { ASSETS: { fetch: assetsFetch as unknown as Fetcher["fetch"] } as Fetcher } satisfies Env,
+    env: {
+      ASSETS: { fetch: assetsFetch as unknown as Fetcher["fetch"] } as Fetcher,
+      SHARES: makeMockKV(),
+    } satisfies Env,
     assetsFetch,
   };
+}
+
+function mintRequest(body: unknown, ip = "1.1.1.1"): Request {
+  return new Request("https://example.com/api/share", {
+    method: "POST",
+    headers: { "content-type": "application/json", "cf-connecting-ip": ip },
+    body: JSON.stringify(body),
+  });
 }
 
 /**
@@ -36,10 +89,14 @@ function makeEnvWithIndexHtml(html: string) {
  * Branches added by later issues (OG-6 OG meta injection, OG-7 mint
  * endpoint, OG-8 `/s/<id>` resolution) extend this file.
  */
-function makeEnv(): { env: Env; assetsFetch: ReturnType<typeof vi.fn> } {
+function makeEnv(): { env: Env; assetsFetch: ReturnType<typeof vi.fn>; shares: KVNamespace } {
   const assetsFetch = vi.fn(async (req: Request) => new Response("asset:" + new URL(req.url).pathname));
-  const env: Env = { ASSETS: { fetch: assetsFetch as unknown as Fetcher["fetch"] } as Fetcher };
-  return { env, assetsFetch };
+  const shares = makeMockKV();
+  const env: Env = {
+    ASSETS: { fetch: assetsFetch as unknown as Fetcher["fetch"] } as Fetcher,
+    SHARES: shares,
+  };
+  return { env, assetsFetch, shares };
 }
 
 describe("isStaticAsset", () => {
@@ -224,5 +281,297 @@ describe("injectMetaIntoHead", () => {
 
   it("appends to the end when no </head> tag exists (graceful degradation)", () => {
     expect(injectMetaIntoHead("no head here", "X")).toBe("no head hereX");
+  });
+});
+
+// ----------------------------------------------------------------------
+// OG-7: POST /api/share — mint a shortlink (rate-limited)
+// ----------------------------------------------------------------------
+
+describe("POST /api/share", () => {
+  it("mints a shortlink for a valid payload + persists the row to KV", async () => {
+    const { env, shares } = makeEnv();
+    const sceneEnc = encodeScene(sampleScene());
+    const res = await worker.fetch(mintRequest({ sceneEnc, title: "Foo" }), env);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; url: string };
+    // Returned URL is absolute and includes the new ID.
+    expect(body.url).toMatch(/^https:\/\/example\.com\/s\/[A-Za-z0-9]{10}$/);
+    expect(body.id).toHaveLength(10);
+    // KV now holds the row keyed by that ID.
+    const stored = await shares.get(body.id);
+    expect(stored).toBeTruthy();
+    const row = JSON.parse(stored!) as ShortlinkRow;
+    expect(row.sceneEnc).toBe(sceneEnc);
+    expect(row.title).toBe("Foo");
+    expect(typeof row.createdAt).toBe("number");
+  });
+
+  it("omits the title field when none was supplied", async () => {
+    const { env, shares } = makeEnv();
+    const sceneEnc = encodeScene(sampleScene());
+    const res = await worker.fetch(mintRequest({ sceneEnc }), env);
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()) as { id: string };
+    const row = JSON.parse((await shares.get(id))!) as ShortlinkRow;
+    expect(row.title).toBeUndefined();
+  });
+
+  it("rejects a missing sceneEnc with 400", async () => {
+    const { env } = makeEnv();
+    const res = await worker.fetch(mintRequest({}), env);
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a non-JSON body with 400", async () => {
+    const { env } = makeEnv();
+    const req = new Request("https://example.com/api/share", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "1.1.1.1" },
+      body: "not-json{",
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects invalid sceneEnc charset with 400", async () => {
+    const { env } = makeEnv();
+    const res = await worker.fetch(
+      mintRequest({ sceneEnc: "not!base64?url" }),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects oversized sceneEnc with 400", async () => {
+    const { env } = makeEnv();
+    const huge = "A".repeat(64 * 1024 + 1);
+    const res = await worker.fetch(mintRequest({ sceneEnc: huge }), env);
+    expect(res.status).toBe(400);
+  });
+
+  it("sanitises titles before storage (control chars, length, HTML)", async () => {
+    const { env, shares } = makeEnv();
+    const sceneEnc = encodeScene(sampleScene());
+    const dirty = "Hello\x00<script>" + "x".repeat(200);
+    const res = await worker.fetch(
+      mintRequest({ sceneEnc, title: dirty }),
+      env,
+    );
+    const { id } = (await res.json()) as { id: string };
+    const row = JSON.parse((await shares.get(id))!) as ShortlinkRow;
+    // Sanitiser strips control chars + `<>` and caps at 80 chars.
+    expect(row.title).not.toMatch(/[\x00<>]/);
+    expect((row.title ?? "").length).toBeLessThanOrEqual(80);
+  });
+
+  it("rate-limits a single IP to 10 mints per minute (11th → 429)", async () => {
+    const { env } = makeEnv();
+    const sceneEnc = encodeScene(sampleScene());
+    for (let i = 0; i < 10; i++) {
+      const res = await worker.fetch(mintRequest({ sceneEnc }, "rate-test"), env);
+      expect(res.status).toBe(201);
+    }
+    const denied = await worker.fetch(mintRequest({ sceneEnc }, "rate-test"), env);
+    expect(denied.status).toBe(429);
+    expect(denied.headers.get("retry-after")).toBe("60");
+  });
+
+  it("does not rate-limit different IPs independently", async () => {
+    const { env } = makeEnv();
+    const sceneEnc = encodeScene(sampleScene());
+    for (let i = 0; i < 10; i++) {
+      await worker.fetch(mintRequest({ sceneEnc }, "ip-a"), env);
+    }
+    // Different IP — should still succeed.
+    const res = await worker.fetch(mintRequest({ sceneEnc }, "ip-b"), env);
+    expect(res.status).toBe(201);
+  });
+
+  it("does NOT respond to GET /api/share (route is POST-only)", async () => {
+    const { env, assetsFetch } = makeEnv();
+    await worker.fetch(new Request("https://example.com/api/share"), env);
+    // Falls through to ASSETS rather than handling the mint logic.
+    expect(assetsFetch).toHaveBeenCalled();
+  });
+});
+
+// ----------------------------------------------------------------------
+// OG-8: GET /s/<id> + /s/<id>/og.svg — shortlink resolution
+// ----------------------------------------------------------------------
+
+const SHORTLINK_INDEX_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>ScribbleRig</title></head><body><div id="root"></div></body></html>`;
+
+async function seedShortlink(
+  shares: KVNamespace,
+  row: Partial<ShortlinkRow> & { sceneEnc?: string; id?: string } = {},
+): Promise<{ id: string; row: ShortlinkRow }> {
+  const id = row.id ?? "abc1234567";
+  const stored: ShortlinkRow = {
+    sceneEnc: row.sceneEnc ?? encodeScene(sampleScene()),
+    ...(row.title ? { title: row.title } : {}),
+    createdAt: row.createdAt ?? Date.now(),
+  };
+  await shares.put(id, JSON.stringify(stored));
+  return { id, row: stored };
+}
+
+describe("GET /s/<id>/og.svg", () => {
+  it("renders the SVG from the stored scene with immutable caching", async () => {
+    const { env, shares } = makeEnv();
+    const { id } = await seedShortlink(shares);
+    const res = await worker.fetch(
+      new Request(`https://example.com/s/${id}/og.svg`),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/^image\/svg\+xml/);
+    expect(res.headers.get("cache-control")).toContain("immutable");
+    const body = await res.text();
+    expect(body.startsWith("<svg ")).toBe(true);
+  });
+
+  it("returns 404 for an unknown ID", async () => {
+    const { env } = makeEnv();
+    const res = await worker.fetch(
+      new Request("https://example.com/s/doesnotexist/og.svg"),
+      env,
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /s/<id>", () => {
+  function makeEnvForShortlink() {
+    const assetsFetch = vi.fn(async (req: Request) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/" || url.pathname.endsWith("/index.html")) {
+        return new Response(SHORTLINK_INDEX_HTML, {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      return new Response("asset:" + url.pathname);
+    });
+    const shares = makeMockKV();
+    const env: Env = {
+      ASSETS: { fetch: assetsFetch as unknown as Fetcher["fetch"] } as Fetcher,
+      SHARES: shares,
+    };
+    return { env, assetsFetch, shares };
+  }
+
+  it("injects og:* meta tags and the inline og-data script", async () => {
+    const { env, shares } = makeEnvForShortlink();
+    const sceneEnc = encodeScene(sampleScene());
+    const { id } = await seedShortlink(shares, { sceneEnc, title: "Demo" });
+    const res = await worker.fetch(new Request(`https://example.com/s/${id}`), env);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(`property="og:title"`);
+    expect(html).toContain(`content="Demo"`);
+    // Image URL points to /s/<id>/og.svg, NOT /og.svg?s=
+    expect(html).toContain(`/s/${id}/og.svg`);
+    // og-data script carries the encoded scene
+    expect(html).toContain(`id="og-data"`);
+    expect(html).toContain(sceneEnc);
+  });
+
+  it("uses the stored title even if the encoded scene's title differs", async () => {
+    const { env, shares } = makeEnvForShortlink();
+    // Encoded scene says "embedded", but the stored row says "stored". The
+    // stored title wins because that's what the creator named the share.
+    const inner = { ...sampleScene(), title: "embedded" };
+    const { id } = await seedShortlink(shares, {
+      sceneEnc: encodeScene(inner),
+      title: "stored",
+    });
+    const res = await worker.fetch(new Request(`https://example.com/s/${id}`), env);
+    const html = await res.text();
+    expect(html).toContain(`content="stored"`);
+    expect(html).not.toContain(`content="embedded"`);
+  });
+
+  it("falls back to deriveTitle when no title is stored", async () => {
+    const { env, shares } = makeEnvForShortlink();
+    const { id } = await seedShortlink(shares, {
+      sceneEnc: encodeScene(sampleScene()),
+    });
+    const res = await worker.fetch(new Request(`https://example.com/s/${id}`), env);
+    const html = await res.text();
+    expect(html).toContain(`content="1 ball"`); // sampleScene has one ball
+  });
+
+  it("sends immutable Cache-Control", async () => {
+    const { env, shares } = makeEnvForShortlink();
+    const { id } = await seedShortlink(shares);
+    const res = await worker.fetch(new Request(`https://example.com/s/${id}`), env);
+    expect(res.headers.get("cache-control")).toContain("immutable");
+  });
+
+  it("returns 404 for an unknown ID", async () => {
+    const { env } = makeEnvForShortlink();
+    const res = await worker.fetch(new Request("https://example.com/s/missing999"), env);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("buildShortlinkMeta", () => {
+  it("uses absolute /s/<id>/og.svg as og:image", () => {
+    const meta = buildShortlinkMeta(
+      sampleScene("Foo"),
+      new URL("https://example.com/s/abc123"),
+      "abc123",
+    );
+    expect(meta).toContain('content="https://example.com/s/abc123/og.svg"');
+    expect(meta).toContain('content="https://example.com/s/abc123"');
+  });
+});
+
+describe("buildOgDataScript", () => {
+  it("emits a JSON-typed script with the encoded scene payload", () => {
+    const out = buildOgDataScript("ABCxyz_-");
+    expect(out).toContain(`type="application/json"`);
+    expect(out).toContain(`id="og-data"`);
+    expect(out).toContain(`"sceneEnc":"ABCxyz_-"`);
+  });
+
+  it("escapes any </script> sequences defensively", () => {
+    // The encoded scene shouldn't contain `<`, but the defence layer is
+    // independent of upstream sanitisation.
+    const out = buildOgDataScript("safe");
+    expect(out).not.toContain("</script>safe");
+    // Round-trip: the body of the script (after stripping the wrapper) is
+    // still parseable as JSON.
+    const body = out.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
+    expect(() => JSON.parse(body)).not.toThrow();
+  });
+});
+
+describe("parseShareBody", () => {
+  it("accepts a minimal valid body", () => {
+    const out = parseShareBody({ sceneEnc: "ValidPayload_-A" });
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.value).toEqual({ sceneEnc: "ValidPayload_-A" });
+  });
+
+  it("rejects non-object bodies", () => {
+    expect(parseShareBody(null).ok).toBe(false);
+    expect(parseShareBody("string").ok).toBe(false);
+    expect(parseShareBody(42).ok).toBe(false);
+    // Arrays *are* `typeof object` in JS, but they have no `sceneEnc` key
+    // so the next check rejects them.
+    expect(parseShareBody([]).ok).toBe(false);
+  });
+
+  it("rejects missing or wrong-typed sceneEnc", () => {
+    expect(parseShareBody({}).ok).toBe(false);
+    expect(parseShareBody({ sceneEnc: "" }).ok).toBe(false);
+    expect(parseShareBody({ sceneEnc: 42 }).ok).toBe(false);
+  });
+
+  it("drops a non-string title rather than erroring", () => {
+    const out = parseShareBody({ sceneEnc: "ABC123", title: 42 });
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.value.title).toBeUndefined();
   });
 });

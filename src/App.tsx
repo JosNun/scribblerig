@@ -21,7 +21,6 @@ import {
   bootSession,
   hasSharedScene,
   saveSession,
-  shareUrl,
   strippedUrl,
   bodyToShareText,
   bodyFromShareText,
@@ -67,6 +66,7 @@ import { DoodleBorder } from "./ui/DoodleBorder";
 import { Icon } from "./ui/Icon";
 import { PropertyPanel } from "./ui/PropertyPanel";
 import { RoomSettingsPanel } from "./ui/RoomSettingsPanel";
+import { SharePopover } from "./ui/SharePopover";
 
 /** Coarse pointers (touch) get larger hit tolerances so fingers can grab handles. */
 const COARSE = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
@@ -205,7 +205,7 @@ export default function App() {
   const [ghost, setGhost] = useState<{ type: BodyType; x: number; y: number; droppable: boolean } | null>(null);
   const [revision, setRevision] = useState(0);
   const bump = () => setRevision((r) => r + 1);
-  const [copied, setCopied] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   // Builds list (saved sessions): null when closed, the snapshot list when open.
   const [builds, setBuilds] = useState<SessionMeta[] | null>(null);
 
@@ -1039,17 +1039,15 @@ export default function App() {
     bump();
   };
 
-  // Copy a shareable link (the scene encoded in the URL fragment) to the
-  // clipboard, falling back to a prompt where clipboard access is blocked.
-  const copyLink = async () => {
-    const url = shareUrl(sceneRef.current);
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      window.prompt("Copy this link:", url);
-    }
+  // Set or clear `scene.title` (issue og-share/01). Routed through
+  // `bump()` so autosave picks it up immediately — naming a build
+  // should survive a refresh, not just live until the popover closes.
+  const renameScene = (title: string) => {
+    const next = { ...sceneRef.current };
+    if (title) next.title = title;
+    else delete next.title;
+    sceneRef.current = next;
+    bump();
   };
 
   // ----- saved builds (sessions) -----
@@ -1169,8 +1167,8 @@ export default function App() {
     <>
       <button className="icon-btn" onClick={duplicateSelection} disabled={!building || !selected || !bodyById(selected)} title="Duplicate"><DoodleBorder interactive /><Icon name="copy" /></button>
       <button className="icon-btn" onClick={deleteSelected} disabled={!building || !selected} title="Delete"><DoodleBorder interactive /><Icon name="delete" /></button>
-      <button onClick={copyLink} title="Copy a shareable link to this build">
-        <DoodleBorder interactive /><Icon name="link" /> <span>{copied ? "Copied!" : "Share"}</span>
+      <button onClick={() => setShareOpen(true)} title="Share this build">
+        <DoodleBorder interactive /><Icon name="link" /> <span>Share</span>
       </button>
       <button onClick={openBuilds} title="Browse your saved builds"><DoodleBorder interactive /><span>Builds</span></button>
     </>
@@ -1356,6 +1354,16 @@ export default function App() {
 
       {/* Saved-builds list (overlay), opened from the actions row. */}
       {buildsEl}
+
+      {/* Share popover (og-share issue 03). Centered overlay; minting a
+          shortlink only happens on Copy click, so opening this is cheap. */}
+      {shareOpen && (
+        <SharePopover
+          scene={sceneRef.current}
+          onRenameScene={renameScene}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
 
       {/* Drag ghost following the cursor, sized to the body's true scale. */}
       {ghost && (

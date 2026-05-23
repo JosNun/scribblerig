@@ -13,6 +13,21 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
+  // KV namespace holding shortlink rows: key = 10-char base62 ID, value =
+  // JSON-encoded { sceneEnc, title?, createdAt }. Plus per-IP rate-limit
+  // counters under `rate:<ip>`. See og-share PRD + ADR-0010.
+  //
+  // The `id`s below must be provisioned with `wrangler kv namespace create
+  // SHARES` (and `… --preview`) and pasted in before deploying. Until
+  // then, leave them as the placeholder strings — `wrangler dev --local`
+  // will still simulate the namespace in-memory.
+  "kv_namespaces": [
+    {
+      "binding": "SHARES",
+      "id": "PLACEHOLDER_PROD_NAMESPACE_ID",
+      "preview_id": "PLACEHOLDER_PREVIEW_NAMESPACE_ID"
+    }
+  ],
   "compatibility_flags": [
     "nodejs_compat"
   ]
