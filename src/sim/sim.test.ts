@@ -4,6 +4,7 @@ import {
   createScene,
   addBody,
   addConnector,
+  updateBody,
   updateRoomSettings,
   tracerScene,
 } from "../scene/scene";
@@ -367,6 +368,41 @@ describe("connectors compile to joints", () => {
     const t = world.readTransforms();
     const dr = t.get(arm.id)!.rotation - t.get(base.id)!.rotation;
     expect(Math.atan2(Math.sin(dr), Math.cos(dr))).toBeCloseTo(Math.PI / 2, 3);
+    world.free();
+  });
+
+  it("a pin's anchors stay coincident after a body is moved post-placement (issue 24)", () => {
+    // Drift bug: placing a pin between two bodies stores a local anchor on
+    // each. Moving one body in the editor separated those anchors in world
+    // space; on compile the revolute then yanked the bodies together to
+    // satisfy the constraint. With single-pivot derivation, both anchors are
+    // re-derived from one canonical world point at compile, so the joint is
+    // already satisfied and nothing snaps.
+    let scene = updateRoomSettings(createScene(), 0, { gravity: { x: 0, y: 0 } });
+    const a = addBody(scene, 0, makeBody("ball", { x: 0, y: 5 }));
+    scene = a.scene;
+    const b = addBody(scene, 0, makeBody("ball", { x: 0, y: 5 }));
+    scene = b.scene;
+    // Pin placed where both bodies overlap (world (0, 5) = each body's center).
+    scene = addConnector(scene, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { body: b.id, local: { x: 0, y: 0 } },
+      props: {},
+    }).scene;
+    // Now move body b in the editor — stale b.local (0, 0) would drift to
+    // world (3, 5) under the old two-anchor model.
+    scene = updateBody(scene, 0, b.id, { position: { x: 3, y: 5 } });
+
+    const world = compile(scene);
+    for (let i = 0; i < 5; i++) world.step();
+    const ta = world.readTransforms().get(a.id)!;
+    const tb = world.readTransforms().get(b.id)!;
+    // Both bodies remain at their design positions (no gravity, no snap).
+    expect(ta.position.x).toBeCloseTo(0, 3);
+    expect(ta.position.y).toBeCloseTo(5, 3);
+    expect(tb.position.x).toBeCloseTo(3, 3);
+    expect(tb.position.y).toBeCloseTo(5, 3);
     world.free();
   });
 

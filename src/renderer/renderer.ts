@@ -154,36 +154,39 @@ export function createRenderer(
       // The rest-length marker is for the selected spring only (issue 12).
       if (selected) drawSpringRest(aw, bw, conn.props as Props);
       strokeSpring(pa, pb);
-    } else if (conn.type === "weld") {
-      line(pa, pb);
-      square(pa, 4);
-      square(pb, 4);
+      // Two anchors → two draggable endpoint handles when selected.
+      if (selected) drawEndpointHandles([pa, pb]);
     } else {
-      // pin or motor: a hinge. Faint axis line + a pivot ring; a motor adds a
-      // little rotation arrow so it reads as "powered".
-      ctx.globalAlpha = 0.5;
-      line(pa, pb);
-      ctx.globalAlpha = 1;
+      // pin / weld / motor — a single shared point (issue 24). The world endpoint
+      // wins (it's a fixed pivot); otherwise body `a`'s anchor is canonical. The
+      // partner's anchor derives from this same point at compile, so the joint is
+      // already satisfied — no line to draw between drifted anchors.
       const pivotWorld = !isBodyEndpoint(conn.a) ? aw : !isBodyEndpoint(conn.b) ? bw : aw;
       const pivot = worldToScreen(cam, pivotWorld);
-      ring(pivot, 6);
-      // Arrow follows the motor's actual direction: a non-reversed motor spins
-      // the body counter-clockwise; `reverse` flips it (issue 12).
-      if (conn.type === "motor") motorArc(pivot, 11, conn.props.reverse !== true);
-    }
-    // Draggable endpoint handles when selected.
-    if (selected) {
-      ctx.fillStyle = SELECT_COLOR;
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 1.5;
-      for (const p of [pa, pb]) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
+      if (conn.type === "weld") {
+        square(pivot, 4);
+      } else {
+        ring(pivot, 6);
+        // Arrow follows the motor's actual direction: a non-reversed motor spins
+        // the body counter-clockwise; `reverse` flips it (issue 12).
+        if (conn.type === "motor") motorArc(pivot, 11, conn.props.reverse !== true);
       }
+      if (selected) drawEndpointHandles([pivot]);
     }
     ctx.restore();
+  }
+
+  /** Filled circle handles at each endpoint of the selected connector. */
+  function drawEndpointHandles(points: Vec2[]): void {
+    ctx.fillStyle = SELECT_COLOR;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 1.5;
+    for (const p of points) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
   }
 
   function drawDrawOverlay(overlay: DrawOverlay): void {

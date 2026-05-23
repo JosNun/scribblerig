@@ -56,6 +56,7 @@ import {
   applyResize,
   applyRotation,
   clampInsideRoom,
+  pruneDetachedConnectors,
   type HandleId,
 } from "./editor/editor";
 import { snap as snapEndpoint, endpointOf, type SnapResult } from "./snapping/snapping";
@@ -613,6 +614,7 @@ export default function App() {
       const { id, end } = endpointDragRef.current;
       const result = snapEndpoint(sceneRef.current, 0, raw, ANCHOR_PX / cameraRef.current.scale);
       sceneRef.current = updateConnector(sceneRef.current, 0, id, { [end]: endpointOf(result) });
+      sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
       overlayRef.current = { snap: result.world };
       bump();
       return;
@@ -633,6 +635,8 @@ export default function App() {
           position,
         });
       }
+      // A rotate/resize can move the pivot outside a connected body — issue 24.
+      sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
       bump();
     } else if (dragOffsetRef.current) {
       const off = dragOffsetRef.current;
@@ -642,6 +646,8 @@ export default function App() {
       sceneRef.current = updateBody(sceneRef.current, 0, id, {
         position: clampInsideRoom(size, body, snapped),
       });
+      // Moving a body off a pin/weld/motor pivot pops that connector off (issue 24).
+      sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
     }
   };
 
@@ -763,6 +769,8 @@ export default function App() {
     const body = bodyById(id);
     if (body) {
       sceneRef.current = updateBody(sceneRef.current, 0, id, { props: { ...body.props, ...patch } });
+      // Shrinking radius/width/height can move the pivot outside the shape (issue 24).
+      sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
       bump();
       return;
     }

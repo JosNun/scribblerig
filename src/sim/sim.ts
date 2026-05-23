@@ -234,6 +234,22 @@ function compileConnector(
   if (!hostA || !hostB) return null; // a referenced body was deleted
   if (hostA.rb === hostB.rb) return null; // both ends in one compound — no joint
 
+  // Pin / weld / motor are point-coincident: they describe a single shared
+  // point, not two independent anchors. Storing two locals lets them drift
+  // when a body is moved post-placement (issue 24); deriving both from one
+  // canonical world point keeps them coincident by construction, so the
+  // revolute / fixed joint has nothing to snap. The world endpoint wins (it
+  // *is* a fixed point); otherwise body `a`'s anchor is canonical. Computed
+  // before the fixed-first reorder so the source of truth is preserved.
+  const canonicalWorld: Vec2 | null =
+    conn.type === "spring"
+      ? null
+      : !isBodyEndpoint(conn.a)
+        ? toWorld(hostA, hostA.anchor)
+        : !isBodyEndpoint(conn.b)
+          ? toWorld(hostB, hostB.anchor)
+          : toWorld(hostA, hostA.anchor);
+
   // Rapier's joints (notably the spring) only enforce their constraint when a
   // fixed body is the *first* body — a dynamic-then-fixed pair collapses to
   // zero length instead of holding the rest length. Drawing a spring *from* a
@@ -244,8 +260,8 @@ function compileConnector(
     [hostA, hostB] = [hostB, hostA];
   }
 
-  const anchorA = hostA.anchor;
-  const anchorB = hostB.anchor;
+  const anchorA = canonicalWorld ? toLocalPt(hostA, canonicalWorld) : hostA.anchor;
+  const anchorB = canonicalWorld ? toLocalPt(hostB, canonicalWorld) : hostB.anchor;
   const worldA = toWorld(hostA, anchorA);
   const worldB = toWorld(hostB, anchorB);
   const props = conn.props as Props;

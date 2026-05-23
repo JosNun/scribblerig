@@ -4,7 +4,7 @@
  * *what mutation happens* lives here and in `scene`.
  */
 
-import type { Body, Endpoint, Scene, Vec2 } from "../scene/scene";
+import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
 import { def, type Props, type Shape } from "../registry/registry";
 
@@ -303,4 +303,53 @@ function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
   let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** True if `worldPoint` lies inside any of `body`'s collision shapes. */
+export function pointInBody(body: Body, worldPoint: Vec2): boolean {
+  const local = toLocal(worldPoint, body.position, body.rotation);
+  return def(body.type).shapes(body.props as Props).some((s) => containsLocal(s, local));
+}
+
+/**
+ * The single canonical pivot of a point-coincident connector (pin / weld /
+ * motor) in world coords (issue 24). The world endpoint wins (it's already a
+ * fixed point); otherwise body `a`'s anchor is canonical. Springs have no
+ * single pivot — they're a distance between two anchors — so this returns
+ * `null` for them.
+ */
+export function connectorPivot(
+  scene: Scene,
+  roomIndex: number,
+  conn: Connector,
+): Vec2 | null {
+  if (conn.type === "spring") return null;
+  const ep = !isBodyEndpoint(conn.a) ? conn.a : !isBodyEndpoint(conn.b) ? conn.b : conn.a;
+  return endpointWorld(scene, roomIndex, ep);
+}
+
+/**
+ * Remove pin / weld / motor connectors whose pivot no longer lies inside every
+ * body they reference (issue 24). Matches the placement semantic — the click
+ * went through these bodies, so pulling them apart "pops" the joint off.
+ * Springs aren't pruned; their anchors are allowed to sit anywhere.
+ */
+export function pruneDetachedConnectors(scene: Scene, roomIndex: number): Scene {
+  const room = scene.rooms[roomIndex];
+  const byId = new Map(room.bodies.map((b) => [b.id, b]));
+  const survivors = room.connectors.filter((c) => {
+    const pivot = connectorPivot(scene, roomIndex, c);
+    if (!pivot) return true; // spring, or its referenced body is gone (left alone)
+    for (const ep of [c.a, c.b]) {
+      if (!isBodyEndpoint(ep)) continue;
+      const body = byId.get(ep.body);
+      if (!body) return false; // body deleted — connector is dangling
+      if (!pointInBody(body, pivot)) return false;
+    }
+    return true;
+  });
+  if (survivors.length === room.connectors.length) return scene;
+  const rooms = scene.rooms.slice();
+  rooms[roomIndex] = { ...room, connectors: survivors };
+  return { ...scene, rooms };
 }

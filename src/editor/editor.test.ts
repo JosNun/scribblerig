@@ -9,8 +9,11 @@ import {
   applyRotation,
   clampInsideRoom,
   connectorsAtPoint,
+  pointInBody,
+  connectorPivot,
+  pruneDetachedConnectors,
 } from "./editor";
-import { createScene, addBody, addConnector } from "../scene/scene";
+import { createScene, addBody, addConnector, updateBody } from "../scene/scene";
 import { makeBody } from "../registry/registry";
 import type { Body } from "../scene/scene";
 
@@ -206,5 +209,131 @@ describe("clampInsideRoom", () => {
     // so its world half-width is ~0.2 and it can sit much closer to the wall.
     const b = platform({ rotation: Math.PI / 2 });
     expect(clampInsideRoom(size, b, { x: 10, y: 6 }).x).toBeCloseTo(6 - 0.2, 5);
+  });
+});
+
+describe("pointInBody", () => {
+  it("is true for a point inside a ball's radius and false outside", () => {
+    const b = ball({ position: { x: 2, y: 3 } }); // radius 0.5
+    expect(pointInBody(b, { x: 2.3, y: 3 })).toBe(true);
+    expect(pointInBody(b, { x: 2.6, y: 3 })).toBe(false);
+  });
+
+  it("respects a box's rotated extent", () => {
+    // A 3×0.4 platform rotated 90° lies along the y axis: ~3 tall, 0.4 wide.
+    const b = platform({ rotation: Math.PI / 2, position: { x: 0, y: 0 } });
+    expect(pointInBody(b, { x: 0, y: 1 })).toBe(true);
+    expect(pointInBody(b, { x: 1, y: 0 })).toBe(false);
+  });
+});
+
+describe("connectorPivot", () => {
+  it("returns null for a spring (no single pivot)", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 0 })); s = a.scene;
+    const c = addConnector(s, 0, {
+      type: "spring",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 3, y: 0 } },
+      props: {},
+    });
+    s = c.scene;
+    expect(connectorPivot(s, 0, s.rooms[0].connectors[0])).toBeNull();
+  });
+
+  it("returns the world endpoint when one side is a fixed world point", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 5, y: 5 })); s = a.scene;
+    const c = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 2, y: 3 } }, // world wins
+      props: {},
+    });
+    s = c.scene;
+    expect(connectorPivot(s, 0, s.rooms[0].connectors[0])).toEqual({ x: 2, y: 3 });
+  });
+
+  it("returns body `a`'s anchor world position when both ends are body-anchored", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = b.scene;
+    const c = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { body: b.id, local: { x: 0, y: 0 } },
+      props: {},
+    });
+    s = c.scene;
+    // Moving b leaves the canonical pivot on a.
+    s = updateBody(s, 0, b.id, { position: { x: 3, y: 5 } });
+    expect(connectorPivot(s, 0, s.rooms[0].connectors[0])).toEqual({ x: 0, y: 5 });
+  });
+});
+
+describe("pruneDetachedConnectors (issue 24)", () => {
+  it("removes a pin whose partner has been moved away from the pivot", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = b.scene;
+    const c = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { body: b.id, local: { x: 0, y: 0 } },
+      props: {},
+    });
+    s = c.scene;
+    // Move b far away; pivot (on a at world (0,5)) is now outside b's radius.
+    s = updateBody(s, 0, b.id, { position: { x: 3, y: 5 } });
+    s = pruneDetachedConnectors(s, 0);
+    expect(s.rooms[0].connectors).toEqual([]);
+  });
+
+  it("keeps a pin whose pivot is still inside both bodies", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = b.scene;
+    const c = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { body: b.id, local: { x: 0, y: 0 } },
+      props: {},
+    });
+    s = c.scene;
+    // Nudge b by 0.2m — pivot at (0,5) still inside b (radius 0.5).
+    s = updateBody(s, 0, b.id, { position: { x: 0.2, y: 5 } });
+    s = pruneDetachedConnectors(s, 0);
+    expect(s.rooms[0].connectors).toHaveLength(1);
+  });
+
+  it("never prunes a spring, regardless of anchor positions", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 5, y: 5 })); s = b.scene;
+    s = addConnector(s, 0, {
+      type: "spring",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { body: b.id, local: { x: 0, y: 0 } },
+      props: { restLength: 5 },
+    }).scene;
+    // Move the bodies further; a spring's anchors don't need to be inside.
+    s = updateBody(s, 0, b.id, { position: { x: 50, y: 50 } });
+    s = pruneDetachedConnectors(s, 0);
+    expect(s.rooms[0].connectors).toHaveLength(1);
+  });
+
+  it("removes a world-anchored pin/weld/motor when the body moves off its world point", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    s = addConnector(s, 0, {
+      type: "weld",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 5 } }, // anchored at the body's current spot
+      props: {},
+    }).scene;
+    // Move the body away from the world anchor; weld falls off.
+    s = updateBody(s, 0, a.id, { position: { x: 5, y: 5 } });
+    s = pruneDetachedConnectors(s, 0);
+    expect(s.rooms[0].connectors).toEqual([]);
   });
 });
