@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.14.0",
+    "@resvg/resvg-wasm": "^2.6.2",
     "pako": "^2.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

@@ -14,6 +14,7 @@
 
 import { decodeScene, sanitizeTitle } from "../share/codec";
 import { renderSceneToSvg } from "../og/renderSvg";
+import { renderSvgToPng } from "../og/renderPng";
 import { deriveTitle } from "../og/deriveTitle";
 import type { Scene } from "../scene/scene";
 import { nextShortlinkId } from "./id";
@@ -69,6 +70,12 @@ export default {
       return handleOgSvg(url);
     }
 
+    // GET /og.png?s=ENC — same image rasterised to PNG (Twitter / X
+    // rejects SVG for card images, hence both formats).
+    if (url.pathname === "/og.png") {
+      return handleOgPng(url);
+    }
+
     // GET / (with ?s=ENC) — inject OG meta into index.html so crawlers see
     // a preview. Without ?s= we just pass through to the static asset.
     if (url.pathname === "/" && url.searchParams.get(SHARE_PARAM)) {
@@ -85,6 +92,12 @@ export default {
     const ogSvgMatch = url.pathname.match(/^\/s\/([A-Za-z0-9]+)\/og\.svg$/);
     if (ogSvgMatch) {
       return handleShortlinkOgSvg(ogSvgMatch[1], env);
+    }
+
+    // GET /s/<id>/og.png — PNG version (preferred by Twitter / X).
+    const ogPngMatch = url.pathname.match(/^\/s\/([A-Za-z0-9]+)\/og\.png$/);
+    if (ogPngMatch) {
+      return handleShortlinkOgPng(ogPngMatch[1], env);
     }
 
     // GET /s/<id> — serve the SPA HTML with og:* meta + an inline scene
@@ -129,6 +142,51 @@ function handleOgSvg(url: URL): Response {
   return new Response(svg, {
     headers: {
       "content-type": "image/svg+xml; charset=utf-8",
+      "cache-control": IMMUTABLE_CACHE,
+    },
+  });
+}
+
+/**
+ * Render the OG image for a URL-encoded scene as PNG (Twitter / X
+ * prefers PNG over SVG for card images). Same immutable caching as the
+ * SVG path — the encoded scene is content-addressable, so once the edge
+ * has rasterised it, it never needs to again.
+ */
+async function handleOgPng(url: URL): Promise<Response> {
+  const encoded = url.searchParams.get(SHARE_PARAM);
+  if (!encoded) {
+    return new Response("Missing ?s= scene parameter", { status: 400 });
+  }
+  const scene = decodeScene(encoded);
+  if (!scene) {
+    return new Response("Could not decode scene", { status: 400 });
+  }
+  const svg = renderSceneToSvg(scene);
+  const png = await renderSvgToPng(svg);
+  return pngResponse(png);
+}
+
+/** PNG variant of `handleShortlinkOgSvg`. */
+async function handleShortlinkOgPng(id: string, env: Env): Promise<Response> {
+  const row = await readShortlinkRow(env.SHARES, id);
+  if (!row) return new Response("Not found", { status: 404 });
+  const scene = decodeScene(row.sceneEnc);
+  if (!scene) return new Response("Could not decode stored scene", { status: 500 });
+  const svg = renderSceneToSvg(scene);
+  const png = await renderSvgToPng(svg);
+  return pngResponse(png);
+}
+
+function pngResponse(bytes: Uint8Array): Response {
+  // Copy into a fresh ArrayBuffer so the Response body owns memory
+  // independent of the wasm-owned source. Also sidesteps TS's strict
+  // BodyInit typing which would otherwise reject Uint8Array<ArrayBufferLike>.
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return new Response(copy.buffer, {
+    headers: {
+      "content-type": "image/png",
       "cache-control": IMMUTABLE_CACHE,
     },
   });
@@ -329,13 +387,14 @@ async function handleShortlinkHtml(
 export function buildShortlinkMeta(scene: Scene, requestUrl: URL, id: string): string {
   const title = (scene.title && scene.title.trim()) || deriveTitle(scene);
   const description = `${title} — a ScribbleRig build.`;
-  const og = `${requestUrl.origin}/s/${id}/og.svg`;
+  // PNG by default for crawler compatibility (see buildOgMeta).
+  const og = `${requestUrl.origin}/s/${id}/og.png`;
   const canonical = `${requestUrl.origin}/s/${id}`;
   return [
     `<meta property="og:title" content="${esc(title)}">`,
     `<meta property="og:description" content="${esc(description)}">`,
     `<meta property="og:image" content="${esc(og)}">`,
-    `<meta property="og:image:type" content="image/svg+xml">`,
+    `<meta property="og:image:type" content="image/png">`,
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
     `<meta property="og:url" content="${esc(canonical)}">`,
@@ -409,13 +468,16 @@ export function buildOgMeta(scene: Scene, requestUrl: URL, encoded: string): str
   const description = `${title} — a ScribbleRig build.`;
   // Absolute URLs are required by every major crawler. Build from the
   // request's own origin so previews and deploys both work without config.
-  const og = `${requestUrl.origin}/og.svg?s=${encoded}`;
+  // We point at the PNG endpoint by default — Twitter / X rejects SVG card
+  // images, and PNG works on every other platform too. The SVG endpoint
+  // remains available at /og.svg?s=... for anyone who wants it.
+  const og = `${requestUrl.origin}/og.png?s=${encoded}`;
   const canonical = `${requestUrl.origin}/?s=${encoded}`;
   return [
     `<meta property="og:title" content="${esc(title)}">`,
     `<meta property="og:description" content="${esc(description)}">`,
     `<meta property="og:image" content="${esc(og)}">`,
-    `<meta property="og:image:type" content="image/svg+xml">`,
+    `<meta property="og:image:type" content="image/png">`,
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
     `<meta property="og:url" content="${esc(canonical)}">`,

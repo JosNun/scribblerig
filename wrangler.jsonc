@@ -3,6 +3,17 @@
 	"name": "scribblerig",
 	"compatibility_date": "2026-05-22",
 	"main": "src/worker/index.ts",
+	// Disable the auto-assigned `scribblerig.josnun.workers.dev` subdomain so
+	// the only public origin is the custom domain below. Avoids cross-origin
+	// confusion in OG previews — every share URL minted (and every meta tag
+	// inside it) ends up on the same origin as the SPA itself.
+	"workers_dev": false,
+	"routes": [
+		{
+			"pattern": "scribblerig.josnun.com",
+			"custom_domain": true
+		}
+	],
 	"observability": {
 		"enabled": true
 	},

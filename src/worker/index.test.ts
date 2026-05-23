@@ -1,4 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+
+// Stub renderPng before importing the worker. The real implementation
+// imports `@resvg/resvg-wasm/index_bg.wasm`, which vitest's node env can't
+// load. Tests assert on response shape (status, content-type, cache
+// headers) rather than the bytes, so a fake 8-byte PNG signature is
+// plenty to confirm the right branch fired.
+vi.mock("../og/renderPng", () => ({
+  renderSvgToPng: vi.fn(async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+}));
+
 import worker, {
   buildOgDataScript,
   buildOgMeta,
@@ -156,6 +166,68 @@ describe("worker fetch dispatch", () => {
 // OG-6: SVG render at /og.svg and HTMLRewriter injection at /?s=
 // ----------------------------------------------------------------------
 
+// ----------------------------------------------------------------------
+// OG PNG endpoints (follow-up after OG-8 — Twitter / X rejects SVG)
+// ----------------------------------------------------------------------
+
+describe("GET /og.png?s=ENC", () => {
+  it("rasterises the SVG and returns image/png with immutable caching", async () => {
+    const { env } = makeEnv();
+    const enc = encodeScene(sampleScene());
+    const res = await worker.fetch(
+      new Request(`https://example.com/og.png?s=${enc}`),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toContain("immutable");
+    // Stubbed PNG payload — first 8 bytes are the PNG signature.
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(bytes[0]).toBe(0x89);
+    expect(bytes[1]).toBe(0x50); // 'P'
+    expect(bytes[2]).toBe(0x4e); // 'N'
+    expect(bytes[3]).toBe(0x47); // 'G'
+  });
+
+  it("returns 400 when the `s` parameter is missing", async () => {
+    const { env } = makeEnv();
+    const res = await worker.fetch(new Request("https://example.com/og.png"), env);
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when the scene fails to decode", async () => {
+    const { env } = makeEnv();
+    const res = await worker.fetch(
+      new Request("https://example.com/og.png?s=not-a-real-payload"),
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /s/<id>/og.png", () => {
+  it("rasterises the stored shortlink's scene to PNG", async () => {
+    const { env, shares } = makeEnv();
+    const { id } = await seedShortlink(shares);
+    const res = await worker.fetch(
+      new Request(`https://example.com/s/${id}/og.png`),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toContain("immutable");
+  });
+
+  it("returns 404 for an unknown ID", async () => {
+    const { env } = makeEnv();
+    const res = await worker.fetch(
+      new Request("https://example.com/s/doesnotexist/og.png"),
+      env,
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("GET /og.svg?s=ENC", () => {
   it("returns a rendered SVG with immutable caching", async () => {
     const { env } = makeEnv();
@@ -203,8 +275,9 @@ describe("GET /?s=ENC HTML rewriting", () => {
     expect(html).toContain(`property="og:title"`);
     expect(html).toContain(`content="My machine"`);
     expect(html).toContain(`property="og:image"`);
-    // og:image points to /og.svg with the same encoded payload.
-    expect(html).toContain(`/og.svg?s=${enc}`);
+    // og:image points to /og.png with the same encoded payload — PNG is
+    // the default OG format (SVG is rejected by Twitter / X).
+    expect(html).toContain(`/og.png?s=${enc}`);
   });
 
   it("falls back to deriveTitle when no scene.title is set", async () => {
@@ -259,7 +332,8 @@ describe("buildOgMeta", () => {
 
   it("uses absolute URLs derived from the request origin", () => {
     const meta = buildOgMeta(sampleScene("T"), new URL("https://example.com/?s=X"), "X");
-    expect(meta).toContain('content="https://example.com/og.svg?s=X"');
+    // og:image points at the PNG endpoint (PNG is the default OG format).
+    expect(meta).toContain('content="https://example.com/og.png?s=X"');
     expect(meta).toContain('content="https://example.com/?s=X"');
   });
 });
@@ -469,8 +543,8 @@ describe("GET /s/<id>", () => {
     const html = await res.text();
     expect(html).toContain(`property="og:title"`);
     expect(html).toContain(`content="Demo"`);
-    // Image URL points to /s/<id>/og.svg, NOT /og.svg?s=
-    expect(html).toContain(`/s/${id}/og.svg`);
+    // Image URL points to /s/<id>/og.png (PNG default), NOT /og.svg?s=
+    expect(html).toContain(`/s/${id}/og.png`);
     // og-data script carries the encoded scene
     expect(html).toContain(`id="og-data"`);
     expect(html).toContain(sceneEnc);
@@ -516,13 +590,15 @@ describe("GET /s/<id>", () => {
 });
 
 describe("buildShortlinkMeta", () => {
-  it("uses absolute /s/<id>/og.svg as og:image", () => {
+  it("uses absolute /s/<id>/og.png as og:image", () => {
     const meta = buildShortlinkMeta(
       sampleScene("Foo"),
       new URL("https://example.com/s/abc123"),
       "abc123",
     );
-    expect(meta).toContain('content="https://example.com/s/abc123/og.svg"');
+    // PNG is the default OG format; SVG remains available at /s/<id>/og.svg
+    // for anyone who wants it, but the meta tag points crawlers at PNG.
+    expect(meta).toContain('content="https://example.com/s/abc123/og.png"');
     expect(meta).toContain('content="https://example.com/s/abc123"');
   });
 });
