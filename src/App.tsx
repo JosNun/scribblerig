@@ -925,23 +925,37 @@ export default function App() {
     bump();
   };
 
-  // Mobile palette drag-to-place. The strip scrolls horizontally (touch-action
-  // pan-x), so we wait to see an *upward* drag before committing — that way a
-  // sideways swipe scrolls the strip and an up-drag lifts a shape onto the
-  // canvas. Capture is deferred until commit so native scroll isn't blocked.
+  // Mobile palette drag-to-place. Items have `touch-action: none` so iOS
+  // Safari can't engage its native horizontal-scroll engine on a touch that
+  // starts on a tile (which was silently eating the upward pointer stream
+  // and breaking drag-to-place). We disambiguate horizontal vs vertical
+  // intent ourselves: sideways drags scroll the strip via `scrollLeft`,
+  // upward drags lift a shape onto the canvas. Capture is deferred until
+  // commit, so a tap (no move) still passes through as a tap.
   const mobileDragStartRef = useRef<{ x: number; y: number; type: BodyType } | null>(null);
+  const stripScrollRef = useRef<{ lastX: number } | null>(null);
   const onStripDown = (type: BodyType) => (e: React.PointerEvent) => {
     if (!building) return;
     mobileDragStartRef.current = { x: e.clientX, y: e.clientY, type };
   };
   const onStripMove = (e: React.PointerEvent) => {
+    // Once we're scrolling the strip, route every move to that until lift.
+    if (stripScrollRef.current && stripRef.current) {
+      stripRef.current.scrollLeft -= e.clientX - stripScrollRef.current.lastX;
+      stripScrollRef.current.lastX = e.clientX;
+      return;
+    }
     const start = mobileDragStartRef.current;
     if (!start) return;
     if (!placingRef.current) {
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        mobileDragStartRef.current = null; // sideways → let the strip scroll
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 6) {
+        // Sideways: drive the strip's scrollLeft from JS (since the items
+        // have touch-action: none and iOS won't do it for us).
+        stripScrollRef.current = { lastX: e.clientX };
+        mobileDragStartRef.current = null;
+        capture(e.currentTarget as HTMLElement, e.pointerId);
         return;
       }
       if (dy > -10) return; // wait for a deliberate upward lift
@@ -955,6 +969,7 @@ export default function App() {
   const onStripUp = (e: React.PointerEvent) => {
     const type = placingRef.current;
     mobileDragStartRef.current = null;
+    stripScrollRef.current = null;
     placingRef.current = null;
     draggedOffRef.current = false;
     setGhost(null);
@@ -974,6 +989,7 @@ export default function App() {
   };
   const onStripCancel = () => {
     mobileDragStartRef.current = null;
+    stripScrollRef.current = null;
     placingRef.current = null;
     draggedOffRef.current = false;
     setGhost(null);

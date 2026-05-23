@@ -405,9 +405,12 @@ textarea {
   max-height: calc(85vh - 56px);
 }
 
-/* Horizontal, scrollable palette row shown in the peek. touch-action pan-x
-   lets the browser scroll it sideways while vertical drags reach our handlers
-   (drag a shape up to place it).
+/* Horizontal palette row shown in the peek. `touch-action: none` on the
+   row and its items so iOS Safari never tries to engage native pan-x scroll
+   from a touch that starts on a tile — that was eating the upward pointer
+   stream and silently breaking drag-to-place when nothing was selected. The
+   strip is still scrollable via overflow-x, but the horizontal pan is now
+   driven from JS (onStripMove → scrollLeft) so we have full control.
 
    `--expand` (0 at peek → 1 at full) is driven per-frame from the drawer's live
    position (see trackExpand), so the palette folds away *under the finger* as
@@ -425,7 +428,7 @@ textarea {
   opacity: calc(1 - var(--expand));
   overflow-x: auto;
   overflow-y: hidden;
-  touch-action: pan-x;
+  touch-action: none;
   padding: 2px 0 calc((1 - var(--expand)) * 8px);
   border-bottom: 1.5px dashed rgba(43, 43, 43, 0.25);
   border-bottom-width: calc((1 - var(--expand)) * 1.5px);
@@ -440,7 +443,7 @@ textarea {
 .strip-row .palette-connector {
   flex: 0 0 auto;
   width: auto;
-  touch-action: pan-x;
+  touch-action: none;
 }
 
 .strip-row .palette-divider {
