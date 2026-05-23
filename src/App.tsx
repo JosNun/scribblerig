@@ -22,6 +22,7 @@ import {
   hasSharedScene,
   saveSession,
   shareUrl,
+  strippedUrl,
   bodyToShareText,
   bodyFromShareText,
   listSessions,
@@ -385,8 +386,10 @@ export default function App() {
 
   // A shared scene was already imported on init; strip it from the URL so a
   // later refresh restores the user's autosaved edits, not the original link.
+  // Handles both the current `?s=` form and the legacy `#…` fragment, while
+  // preserving any other query parameters the URL may carry.
   useEffect(() => {
-    if (hasSharedScene()) history.replaceState(null, "", location.pathname + location.search);
+    if (hasSharedScene()) history.replaceState(null, "", strippedUrl(location.href));
   }, []);
 
   // ----- transport -----

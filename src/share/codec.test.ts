@@ -128,3 +128,45 @@ describe("sanitizeScene (tolerant import)", () => {
     expect(out.nextId).toBe(8); // max(2, 7+1, 4+1)
   });
 });
+
+// The scene's optional `title` field — naming a build for OpenGraph previews
+// and shortlinks (issue og-share/01). The codec is the gate that enforces
+// sanitisation, since both shared URLs and autosaves flow through it.
+describe("scene.title", () => {
+  it("round-trips a title through encode → decode", () => {
+    const s: Scene = { ...sampleScene(), title: "My rolling-ball machine" };
+    expect(decodeScene(encodeScene(s))).toEqual(s);
+  });
+
+  it("caps the title at 80 characters", () => {
+    const s: Scene = { ...sampleScene(), title: "x".repeat(200) };
+    expect(decodeScene(encodeScene(s))?.title).toHaveLength(80);
+  });
+
+  it("strips ASCII control characters from titles", () => {
+    const s: Scene = { ...sampleScene(), title: "Hello\x00\x07\x1f\x7fWorld" };
+    expect(decodeScene(encodeScene(s))?.title).toBe("HelloWorld");
+  });
+
+  it("strips angle brackets to defuse HTML injection at the source", () => {
+    // Belt-and-suspenders alongside HTMLRewriter's default attribute escaping.
+    const s: Scene = { ...sampleScene(), title: "<script>alert(1)</script>" };
+    expect(decodeScene(encodeScene(s))?.title).toBe("scriptalert(1)/script");
+  });
+
+  it("a scene without a title sanitises with no title field present", () => {
+    const out = decodeScene(encodeScene(sampleScene()));
+    expect(out).not.toHaveProperty("title");
+  });
+
+  it("drops non-string titles (number, boolean, object)", () => {
+    expect(sanitizeScene({ ...sampleScene(), title: 42 })).not.toHaveProperty("title");
+    expect(sanitizeScene({ ...sampleScene(), title: true })).not.toHaveProperty("title");
+    expect(sanitizeScene({ ...sampleScene(), title: { nested: "obj" } })).not.toHaveProperty("title");
+  });
+
+  it("drops whitespace-only titles", () => {
+    const s = { ...sampleScene(), title: "   \t  " };
+    expect(sanitizeScene(s)).not.toHaveProperty("title");
+  });
+});

@@ -52,7 +52,7 @@ The **design is the source of truth**; the running simulation is a disposable in
 30. As a recipient, I want to open a share link and see the exact build the creator made, so that I can run and explore it.
 31. As a recipient, I want to run the shared build and, in practice, see the same simulation play out, so that we share an experience, not just a static layout.
 32. As a recipient, I want to edit a shared build and re-share my version, so that creations can be remixed.
-33. As a tinkerer, I want sharing to work without creating an account or relying on a server, so that my creations are not dependent on a backend staying alive.
+33. As a tinkerer, I want sharing to work without creating an account, so that my creations don't depend on me having one. (Originally "without relying on a server" — softened in [ADR-0010](../../docs/adr/0010-shortlinks-and-worker-og.md): un-named small scenes still share with no backend dependency via `?s=` URLs; named or oversized scenes use a Cloudflare KV short-link as an opt-in convenience.)
 34. As a tinkerer, I want a sensible default room when I start (floor, normal gravity, grid snap on), so that I can begin building immediately.
 
 ## Implementation Decisions
@@ -165,7 +165,7 @@ Prior art: none yet — this is a greenfield repo, so these tests establish the 
 
 - **Multi-room and portals (v2).** v1 ships a single room. The scene schema accommodates `rooms[]` and `portals[]`, but only one room is built, and portal transfer logic is not implemented.
 - **Per-room gravity feeding between rooms** — depends on portals; v2.
-- **Key-value store fallback for oversized scenes.** v1 is URL-only; the KV short-link escape hatch is deferred.
+- ~~**Key-value store fallback for oversized scenes.** v1 is URL-only; the KV short-link escape hatch is deferred.~~ **Now in-scope** — implemented as named-share shortlinks with OG previews. See [`.scratch/og-share/PRD.md`](../og-share/PRD.md) and [ADR-0010](../../docs/adr/0010-shortlinks-and-worker-og.md). The serverless URL-share path (`?s=` and legacy `#`) keeps working unchanged for un-named small scenes; named or oversized scenes mint a `/s/<id>` short URL backed by Cloudflare KV.
 - **Cross-browser/cross-device determinism guarantee** and any CI harness to verify it. Determinism is best-effort via fixed timestep + single WASM binary; not contractually guaranteed or tested across environments.
 - **Engine-version pinning / loading old Rapier versions** for old share links.
 - **Goals, puzzles, win conditions, levels.** This is a pure free-play sandbox.

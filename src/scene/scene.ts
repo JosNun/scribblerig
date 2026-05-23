@@ -71,6 +71,14 @@ export interface Scene {
   /** Monotonic counter used to mint unique element ids deterministically. */
   nextId: number;
   rooms: Room[];
+  /**
+   * Optional human-readable name for the build (used in OpenGraph previews
+   * and shortlink titles). Sanitised on every codec read — capped to 80
+   * chars, control characters and angle brackets stripped — so anything
+   * persisted is safe to render as plain text in meta tags. See
+   * `.scratch/og-share/PRD.md`.
+   */
+  title?: string;
 }
 
 export const SCENE_VERSION = 1;

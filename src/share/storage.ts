@@ -41,7 +41,7 @@ export interface SessionBoot {
 export function bootSession(): SessionBoot {
   migrateLegacy();
 
-  const shared = sceneFromHash();
+  const shared = typeof location !== "undefined" ? sceneFromUrl(location.href) : null;
   if (shared) return { id: ensureSid(newId()), scene: shared };
 
   const existing = getSid();
@@ -122,13 +122,63 @@ export function renameSession(id: string, title: string): void {
 
 /** Whether the URL currently carries a shared scene (so the boot can clear it). */
 export function hasSharedScene(): boolean {
-  return typeof location !== "undefined" && location.hash.replace(/^#/, "").length > 0;
+  if (typeof location === "undefined") return false;
+  const params = new URLSearchParams(location.search);
+  if (params.get(SHARE_PARAM)) return true;
+  return location.hash.replace(/^#/, "").length > 0;
 }
 
-/** A shareable link that encodes the scene in the URL fragment. */
+/**
+ * A shareable link that encodes the scene as a `?s=` query parameter. We
+ * switched away from `#…` so server-side OpenGraph rendering (see
+ * `.scratch/og-share/PRD.md`) can read the share payload — fragments never
+ * reach the server. Reader still accepts `#…` for backwards compatibility.
+ */
 export function shareUrl(scene: Scene): string {
-  return `${location.origin + location.pathname}#${encodeScene(scene)}`;
+  return `${location.origin + location.pathname}?${SHARE_PARAM}=${encodeScene(scene)}`;
 }
+
+/**
+ * Strip a previously-imported share payload from `url` while preserving any
+ * other query parameters. Returns the path + remaining query (no hash). Pure
+ * — pass a URL string in, get a string back. Used by the App's boot effect.
+ */
+export function strippedUrl(url: string): string {
+  const u = new URL(url);
+  u.searchParams.delete(SHARE_PARAM);
+  u.hash = "";
+  // Preserve trailing `?` only if the caller had real params besides ours.
+  const search = u.searchParams.toString();
+  return u.pathname + (search ? `?${search}` : "");
+}
+
+/**
+ * Extract a Scene from a URL string. Tries `?s=` first (the current share
+ * format), falls back to `#…` (legacy in-the-wild links). Returns `null` if
+ * neither carries a usable payload. Pure — no `location` access — so unit
+ * tests can pass any URL string.
+ */
+export function sceneFromUrl(url: string): Scene | null {
+  let encoded: string | null;
+  try {
+    const u = new URL(url);
+    encoded = u.searchParams.get(SHARE_PARAM);
+    if (!encoded) encoded = u.hash.replace(/^#/, "") || null;
+  } catch {
+    return null;
+  }
+  return encoded ? decodeScene(encoded) : null;
+}
+
+/**
+ * Bytes the share payload would occupy in a URL — useful upstream to decide
+ * whether to auto-promote a long URL to a shortlink (see og-share issue 03).
+ */
+export function encodedLength(scene: Scene): number {
+  return encodeScene(scene).length;
+}
+
+const SHARE_PARAM = "s";
 
 /**
  * Share text carrying a single body, written to the system clipboard on copy so
@@ -222,8 +272,3 @@ function newId(): string {
   return "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-function sceneFromHash(): Scene | null {
-  if (typeof location === "undefined") return null;
-  const hash = location.hash.replace(/^#/, "");
-  return hash ? decodeScene(hash) : null;
-}

@@ -67,11 +67,33 @@ export function sanitizeScene(raw: unknown): Scene | null {
     .map((c) => sanitizeConnector(c, bodyIds))
     .filter((c): c is Connector => c !== null);
 
+  const title = sanitizeTitle(raw.title);
   return {
     version: SCENE_VERSION,
     nextId: computeNextId(raw.nextId, bodies, connectors),
     rooms: [{ settings, bodies, connectors }],
+    ...(title !== undefined ? { title } : {}),
   };
+}
+
+/**
+ * Squeeze any user-supplied value into a plain-text title suitable for
+ * embedding in OpenGraph meta tags and shortlink rows.
+ *
+ *  - Non-strings → dropped (`undefined`).
+ *  - ASCII control chars (`\x00-\x1f`, `\x7f`) stripped.
+ *  - `<` and `>` stripped (HTMLRewriter would escape attribute values, but
+ *    this is a cheap defence-in-depth).
+ *  - Trimmed, then capped at 80 chars.
+ *  - Whitespace-only result → dropped.
+ */
+const TITLE_MAX = 80;
+export function sanitizeTitle(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = v.replace(/[\x00-\x1f\x7f<>]/g, "").trim();
+  if (!cleaned) return undefined;
+  return cleaned.length > TITLE_MAX ? cleaned.slice(0, TITLE_MAX) : cleaned;
 }
 
 function sanitizeBody(raw: unknown): Body | null {
