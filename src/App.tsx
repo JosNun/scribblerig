@@ -1156,9 +1156,12 @@ export default function App() {
 
   // Palette for the vaul drawer: bodies drag up onto the canvas to place;
   // connectors arm on tap. `data-vaul-no-drag` keeps vaul from treating these
-  // gestures as a drawer drag, so our handlers own them.
+  // gestures as a drawer drag, so our handlers own them. Duplicate/Delete
+  // tail the strip so the most common edits are one tap away on the peek
+  // snap — they don't live in the drawer's actions row on mobile.
   const mobilePaletteEls = (
     <>
+      <div className="strip-section">Shapes</div>
       {bodyTypes().map((d) => (
         <DoodleTooltip key={d.type} content={`Drag up to place a ${d.label.toLowerCase()}`}>
           <span className="doodle-tooltip-trigger">
@@ -1177,7 +1180,8 @@ export default function App() {
           </span>
         </DoodleTooltip>
       ))}
-      <div className="palette-divider">Connect</div>
+      <div className="strip-divider" aria-hidden />
+      <div className="strip-section">Connect</div>
       {connectorTypes().map((c) => (
         <button
           key={c.type}
@@ -1190,10 +1194,34 @@ export default function App() {
           <span>{c.label}</span>
         </button>
       ))}
+      <div className="strip-divider" aria-hidden />
+      <div className="strip-section">Edit</div>
+      <button
+        className="palette-connector palette-action"
+        data-vaul-no-drag
+        disabled={!building || !selected || !bodyById(selected)}
+        onClick={duplicateSelection}
+        aria-label="Duplicate"
+      >
+        <span className="palette-action-glyph"><Icon name="copy" /></span>
+        <span>Duplicate</span>
+      </button>
+      <button
+        className="palette-connector palette-action"
+        data-vaul-no-drag
+        disabled={!building || !selected}
+        onClick={deleteSelected}
+        aria-label="Delete"
+      >
+        <span className="palette-action-glyph"><Icon name="delete" /></span>
+        <span>Delete</span>
+      </button>
     </>
   );
 
-  const actionsEls = (
+  // Desktop-only edit actions: on mobile these live as tiles at the tail of
+  // the palette strip so they're reachable on the peek snap.
+  const editActionsEls = (
     <>
       <DoodleTooltip content="Duplicate">
         <span className="doodle-tooltip-trigger">
@@ -1221,6 +1249,12 @@ export default function App() {
           </button>
         </span>
       </DoodleTooltip>
+    </>
+  );
+
+  // Shared between mobile drawer and desktop actions panel.
+  const shareActionsEls = (
+    <>
       <DoodleTooltip content="Share this build">
         <button onClick={() => setShareOpen(true)} aria-label="Share this build">
           <DoodleBorder interactive />
@@ -1434,7 +1468,7 @@ export default function App() {
                 </div>
                 <div className="drawer-props">
                   <div className="drawer-context">{contextLabel}</div>
-                  <div className="sheet-actions">{actionsEls}</div>
+                  <div className="sheet-actions">{shareActionsEls}</div>
                   {rightPanelEl}
                 </div>
               </div>
@@ -1452,7 +1486,8 @@ export default function App() {
           {/* Contextual actions — floating bottom-center */}
           <div className="panel actions">
             <DoodleBorder strokeWidth={2.5} />
-            {actionsEls}
+            {editActionsEls}
+            {shareActionsEls}
             <span className="tip">{tipText}</span>
           </div>
 

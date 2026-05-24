@@ -171,7 +171,12 @@ textarea {
   gap: 2px;
   width: 92px;
   padding: 6px 8px !important;
+  /* iOS Safari renders button text in system blue + system font by default;
+     pull the doodle font and ink colour back through so palette tiles match
+     the rest of the UI on mobile. */
+  font-family: inherit;
   font-size: 13px;
+  color: inherit;
   border: none !important;
   background: transparent;
   border-radius: 10px;
@@ -226,6 +231,28 @@ textarea {
 .palette-item canvas,
 .palette-connector canvas {
   pointer-events: none;
+}
+
+/* Action tiles (Duplicate / Delete) at the tail of the mobile palette strip —
+   the palette-connector shell gives us the right padding and label layout. The
+   glyph slot reserves a 52px box (matching the BodyPreview footprint so labels
+   align), but renders the icon smaller so it doesn't dominate the row. When
+   disabled (nothing selected) both the icon and the label fade so the tile
+   reads as inactive next to its always-on neighbours. */
+.palette-action-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  font-size: 22px;
+  color: #000;
+}
+.palette-action:disabled {
+  color: #777;
+}
+.palette-action:disabled .palette-action-glyph {
+  opacity: 0.35;
 }
 
 .tip {
@@ -549,13 +576,36 @@ button > span:not(.doodle-border__anchor),
   touch-action: pan-x;
 }
 
-.strip-row .palette-divider {
-  border-top: none;
-  border-left: 1.5px dashed #2b2b2b;
-  margin: 4px 2px;
-  padding: 0;
-  font-size: 0; /* hide the "Connect" label; show only the rule */
-  align-self: stretch;
+/* Mobile strip uses dedicated section labels + vertical dividers instead of
+   the desktop's labeled-header pattern. Keeping these as purpose-built
+   elements avoids the `font-size: 0` collapse-on-iOS workaround the
+   horizontal divider would otherwise need. */
+.strip-row .strip-section {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.5;
+}
+.strip-row .strip-divider {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1.5px;
+  height: 60px;
+  margin: 0 4px;
+  /* A repeating gradient paints the dashes — `border-left` on a 0-width box
+     renders inconsistently on iOS Safari (the box collapses), and giving the
+     box a real width with a border ends up double-counting under box-sizing:
+     border-box. Painting into the background avoids both edges. */
+  background: repeating-linear-gradient(
+    to bottom,
+    #2b2b2b 0 4px,
+    transparent 4px 8px
+  );
+  opacity: 0.6;
 }
 
 /* Properties section below the palette; scrolls with the rest of the body. */
