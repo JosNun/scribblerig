@@ -1,0 +1,74 @@
+/* Doodle tooltip — hand-drawn frame around a label, portal-rendered above
+   panels but below modal overlays. Sized to its content so DoodleBorder can
+   wrap it. */
+.doodle-tooltip-content {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: rgba(255, 253, 247, 0.97);
+  color: #2b2b2b;
+  font-family: "Mynerve", ui-rounded, "Comic Sans MS", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.2;
+  border-radius: 6px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.12);
+  max-width: 280px;
+  z-index: 1001;
+  user-select: none;
+  /* Receive pointer events so a tap on the tooltip itself doesn't fall
+     through to the backdrop below and dismiss the tooltip. The content has
+     no click handlers, so taps on it are inert (the user has to tap outside
+     to dismiss). */
+  pointer-events: auto;
+  /* Subtle fade so it doesn't pop when the skip-delay window kicks in. */
+  animation: doodle-tooltip-in 80ms ease-out;
+}
+
+/* Transparent overlay rendered behind the tooltip whenever tap-mode is open.
+   Catches the dismissing tap so it can't accidentally toggle a control on
+   the page behind. Sits just under the tooltip content's z-index. */
+.doodle-tooltip-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: transparent;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Multi-line labels (the connector palette's `label\n\nhelp` pattern, etc.) */
+.doodle-tooltip-text {
+  white-space: pre-line;
+}
+
+/* Keyboard-shortcut chip. */
+.doodle-tooltip-shortcut {
+  display: inline-block;
+  padding: 1px 6px;
+  background: #f0e9d2;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #555;
+}
+
+/* Hover-able wrapper for `disabled` buttons. Native `disabled` filters
+   pointer-events on the button, but the surrounding span still sees the
+   cursor — which is what Radix's listeners attach to. Keep it inline so the
+   button's layout is untouched. */
+.doodle-tooltip-trigger {
+  display: inline-flex;
+}
+
+@keyframes doodle-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(-1px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

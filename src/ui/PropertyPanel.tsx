@@ -2,6 +2,7 @@ import type { PanelItem, PropField, Props } from "../registry/registry";
 import { DoodleBorder } from "./DoodleBorder";
 import { DoodleCheckbox } from "./DoodleCheckbox";
 import { DoodleDial } from "./DoodleDial";
+import { DoodleTooltip } from "./DoodleTooltip";
 import { NumberScrubber } from "./NumberScrubber";
 
 /**
@@ -46,9 +47,11 @@ export function PropertyPanel({
           <span className="prop-label">
             {f.label}
             {f.help && (
-              <span className="help" title={f.help} aria-label={f.help}>
-                ?
-              </span>
+              <DoodleTooltip content={f.help} touchMode="tap">
+                <span className="help" aria-label={f.help} role="button" tabIndex={0}>
+                  ?
+                </span>
+              </DoodleTooltip>
             )}
           </span>
         );

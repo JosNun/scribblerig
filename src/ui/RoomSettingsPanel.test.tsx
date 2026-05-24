@@ -1,7 +1,18 @@
+import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { RoomSettings } from "../scene/scene";
+import { DoodleTooltipProvider } from "./DoodleTooltip";
 import { RoomSettingsPanel } from "./RoomSettingsPanel";
+
+/**
+ * RoomSettingsPanel delegates to PropertyPanel, which mounts `<DoodleTooltip>`
+ * for fields with `help`. Radix Tooltip throws without a Provider in the tree,
+ * so tests wrap the same way the App root does.
+ */
+function render(ui: ReactNode): string {
+  return renderToStaticMarkup(<DoodleTooltipProvider>{ui}</DoodleTooltipProvider>);
+}
 
 /**
  * Schema-routing tests for the room panel. Gravity is stored as a `Vec2` but
@@ -17,7 +28,7 @@ describe("RoomSettingsPanel", () => {
   };
 
   it("renders gravity as a scrubber (strength) + doodle dial (direction)", () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <RoomSettingsPanel settings={baseSettings} onChange={() => {}} />,
     );
     expect(html).toContain(`class="scrubber scrubber-rough"`);
@@ -27,7 +38,7 @@ describe("RoomSettingsPanel", () => {
   });
 
   it("reads gravity direction as 0° for straight-down gravity", () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <RoomSettingsPanel settings={baseSettings} onChange={() => {}} />,
     );
     // angleOf({ x: 0, y: -9.8 }) === 0 (straight down)
@@ -36,7 +47,7 @@ describe("RoomSettingsPanel", () => {
 
   it("reads sideways gravity as 90° (or 270°) on the dial", () => {
     // Gravity pulling right: (x: 9.8, y: 0). atan2(9.8, 0) / RAD = 90.
-    const html = renderToStaticMarkup(
+    const html = render(
       <RoomSettingsPanel
         settings={{ ...baseSettings, gravity: { x: 9.8, y: 0 } }}
         onChange={() => {}}
@@ -46,7 +57,7 @@ describe("RoomSettingsPanel", () => {
   });
 
   it("renders each wall + grid snap as a doodle checkbox reflecting its on/off state", () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <RoomSettingsPanel settings={baseSettings} onChange={() => {}} />,
     );
     // Four wall booleans + the grid-snap boolean → five doodle checkboxes.
@@ -59,14 +70,14 @@ describe("RoomSettingsPanel", () => {
   });
 
   it("uses the `Room` title via the shared PropertyPanel", () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <RoomSettingsPanel settings={baseSettings} onChange={() => {}} />,
     );
     expect(html).toContain(">Room<");
   });
 
   it("renders the grid-snap toggle under a Placement section", () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <RoomSettingsPanel settings={baseSettings} onChange={() => {}} />,
     );
     // Section headers exist for Gravity / Walls / Placement.
@@ -79,7 +90,7 @@ describe("RoomSettingsPanel", () => {
   });
 
   it("reflects the current snap state in the doodle checkbox", () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <RoomSettingsPanel
         settings={{ ...baseSettings, snap: true }}
         onChange={() => {}}

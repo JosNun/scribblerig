@@ -318,7 +318,7 @@ textarea {
   opacity: 0.6;
 }
 
-/* Help badge with a native tooltip */
+/* Help badge — tap (touch) or hover (mouse) reveals a DoodleTooltip. */
 .help {
   display: inline-flex;
   align-items: center;
@@ -331,6 +331,10 @@ textarea {
   font-weight: 700;
   cursor: help;
   opacity: 0.6;
+  /* `manipulation` opts out of iOS's double-tap-to-zoom delay and reduces
+     the synthetic mouse-event chatter that fights tap-to-open. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .help:hover {

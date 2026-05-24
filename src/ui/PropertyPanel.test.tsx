@@ -1,7 +1,18 @@
+import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { bodyTypes, connectorTypes, type PropField } from "../registry/registry";
+import { DoodleTooltipProvider } from "./DoodleTooltip";
 import { PropertyPanel } from "./PropertyPanel";
+
+/**
+ * PropertyPanel renders `<DoodleTooltip>` for fields with `help`, and Radix
+ * Tooltip throws without a `Tooltip.Provider` in the tree. Production wraps
+ * the App once at the root; tests do the same here.
+ */
+function render(ui: ReactNode): string {
+  return renderToStaticMarkup(<DoodleTooltipProvider>{ui}</DoodleTooltipProvider>);
+}
 
 /**
  * Static-markup tests for the schema-driven property panel. We render with
@@ -16,7 +27,7 @@ describe("PropertyPanel", () => {
     const schema: PropField[] = [
       { key: "static", label: "Static", kind: "boolean" },
     ];
-    const html = renderToStaticMarkup(
+    const html = render(
       <PropertyPanel
         title="Platform"
         schema={schema}
@@ -36,7 +47,7 @@ describe("PropertyPanel", () => {
     const schema: PropField[] = [
       { key: "static", label: "Static", kind: "boolean" },
     ];
-    const html = renderToStaticMarkup(
+    const html = render(
       <PropertyPanel
         title="Platform"
         schema={schema}
@@ -53,7 +64,7 @@ describe("PropertyPanel", () => {
     const schema: PropField[] = [
       { key: "radius", label: "Radius", kind: "number", min: 0.1, max: 3, step: 0.1 },
     ];
-    const html = renderToStaticMarkup(
+    const html = render(
       <PropertyPanel
         title="Ball"
         schema={schema}
@@ -74,7 +85,7 @@ describe("PropertyPanel", () => {
       { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05 },
       { key: "static", label: "Static", kind: "boolean" },
     ];
-    const html = renderToStaticMarkup(
+    const html = render(
       <PropertyPanel
         title="Platform"
         schema={schema}
@@ -87,7 +98,7 @@ describe("PropertyPanel", () => {
   });
 
   it("shows the empty state when the schema has no fields", () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <PropertyPanel title="Weld" schema={[]} props={{}} onChange={() => {}} />,
     );
     expect(html).toContain("No adjustable properties.");
@@ -101,7 +112,7 @@ describe("PropertyPanel", () => {
   describe("renders every registered type", () => {
     for (const def of bodyTypes()) {
       it(`renders body type: ${def.type}`, () => {
-        const html = renderToStaticMarkup(
+        const html = render(
           <PropertyPanel
             title={def.label}
             schema={def.propSchema}
@@ -120,7 +131,7 @@ describe("PropertyPanel", () => {
     }
     for (const def of connectorTypes()) {
       it(`renders connector type: ${def.type}`, () => {
-        const html = renderToStaticMarkup(
+        const html = render(
           <PropertyPanel
             title={def.label}
             schema={def.propSchema}
@@ -137,7 +148,7 @@ describe("PropertyPanel", () => {
     const schema: PropField[] = [
       { key: "heading", label: "Heading", kind: "angle" },
     ];
-    const html = renderToStaticMarkup(
+    const html = render(
       <PropertyPanel
         title="Test"
         schema={schema}

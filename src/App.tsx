@@ -63,6 +63,7 @@ import { snap as snapEndpoint, endpointOf, type SnapResult } from "./snapping/sn
 import { BodyPreview } from "./ui/BodyPreview";
 import { ConnectorPreview } from "./ui/ConnectorPreview";
 import { DoodleBorder } from "./ui/DoodleBorder";
+import { DoodleTooltip, DoodleTooltipProvider } from "./ui/DoodleTooltip";
 import { Icon } from "./ui/Icon";
 import { PropertyPanel } from "./ui/PropertyPanel";
 import { RoomSettingsPanel } from "./ui/RoomSettingsPanel";
@@ -1109,35 +1110,42 @@ export default function App() {
     <>
       <div className="palette-label">Shapes</div>
       {bodyTypes().map((d) => (
-        <button
-          key={d.type}
-          className="palette-item"
-          title={`Drag to place a ${d.label.toLowerCase()}`}
-          disabled={!building}
-          onPointerDown={onPaletteDown(d.type)}
-          onPointerMove={onPaletteMove}
-          onPointerUp={onPaletteUp}
-        >
-          <BodyPreview type={d.type} />
-          <span>{d.label}</span>
-        </button>
+        <DoodleTooltip key={d.type} content={`Drag to place a ${d.label.toLowerCase()}`}>
+          <span className="doodle-tooltip-trigger">
+            <button
+              className="palette-item"
+              disabled={!building}
+              onPointerDown={onPaletteDown(d.type)}
+              onPointerMove={onPaletteMove}
+              onPointerUp={onPaletteUp}
+            >
+              <BodyPreview type={d.type} />
+              <span>{d.label}</span>
+            </button>
+          </span>
+        </DoodleTooltip>
       ))}
       <div className="palette-divider">Connect</div>
       {connectorTypes().map((c) => (
-        <button
+        <DoodleTooltip
           key={c.type}
-          className={`palette-connector${connectorTool === c.type ? " active" : ""}`}
-          title={`${c.help}\n\n${
+          content={`${c.help}\n\n${
             c.type === "spring"
               ? "Draw it: drag from one point to another."
               : "Place it: click where two bodies overlap."
           }`}
-          disabled={!building}
-          onClick={() => armConnector(c.type)}
         >
-          <ConnectorPreview type={c.type} />
-          <span>{c.label}</span>
-        </button>
+          <span className="doodle-tooltip-trigger">
+            <button
+              className={`palette-connector${connectorTool === c.type ? " active" : ""}`}
+              disabled={!building}
+              onClick={() => armConnector(c.type)}
+            >
+              <ConnectorPreview type={c.type} />
+              <span>{c.label}</span>
+            </button>
+          </span>
+        </DoodleTooltip>
       ))}
     </>
   );
@@ -1148,20 +1156,22 @@ export default function App() {
   const mobilePaletteEls = (
     <>
       {bodyTypes().map((d) => (
-        <button
-          key={d.type}
-          className="palette-item"
-          data-vaul-no-drag
-          title={`Drag up to place a ${d.label.toLowerCase()}`}
-          disabled={!building}
-          onPointerDown={onStripDown(d.type)}
-          onPointerMove={onStripMove}
-          onPointerUp={onStripUp}
-          onPointerCancel={onStripCancel}
-        >
-          <BodyPreview type={d.type} />
-          <span>{d.label}</span>
-        </button>
+        <DoodleTooltip key={d.type} content={`Drag up to place a ${d.label.toLowerCase()}`}>
+          <span className="doodle-tooltip-trigger">
+            <button
+              className="palette-item"
+              data-vaul-no-drag
+              disabled={!building}
+              onPointerDown={onStripDown(d.type)}
+              onPointerMove={onStripMove}
+              onPointerUp={onStripUp}
+              onPointerCancel={onStripCancel}
+            >
+              <BodyPreview type={d.type} />
+              <span>{d.label}</span>
+            </button>
+          </span>
+        </DoodleTooltip>
       ))}
       <div className="palette-divider">Connect</div>
       {connectorTypes().map((c) => (
@@ -1181,12 +1191,44 @@ export default function App() {
 
   const actionsEls = (
     <>
-      <button className="icon-btn" onClick={duplicateSelection} disabled={!building || !selected || !bodyById(selected)} title="Duplicate"><DoodleBorder interactive /><Icon name="copy" /></button>
-      <button className="icon-btn" onClick={deleteSelected} disabled={!building || !selected} title="Delete"><DoodleBorder interactive /><Icon name="delete" /></button>
-      <button onClick={() => setShareOpen(true)} title="Share this build">
-        <DoodleBorder interactive /><Icon name="link" /> <span>Share</span>
-      </button>
-      <button onClick={openBuilds} title="Browse your saved builds"><DoodleBorder interactive /><span>Builds</span></button>
+      <DoodleTooltip content="Duplicate">
+        <span className="doodle-tooltip-trigger">
+          <button
+            className="icon-btn"
+            onClick={duplicateSelection}
+            disabled={!building || !selected || !bodyById(selected)}
+            aria-label="Duplicate"
+          >
+            <DoodleBorder interactive />
+            <Icon name="copy" />
+          </button>
+        </span>
+      </DoodleTooltip>
+      <DoodleTooltip content="Delete">
+        <span className="doodle-tooltip-trigger">
+          <button
+            className="icon-btn"
+            onClick={deleteSelected}
+            disabled={!building || !selected}
+            aria-label="Delete"
+          >
+            <DoodleBorder interactive />
+            <Icon name="delete" />
+          </button>
+        </span>
+      </DoodleTooltip>
+      <DoodleTooltip content="Share this build">
+        <button onClick={() => setShareOpen(true)} aria-label="Share this build">
+          <DoodleBorder interactive />
+          <Icon name="link" /> <span>Share</span>
+        </button>
+      </DoodleTooltip>
+      <DoodleTooltip content="Browse your saved builds">
+        <button onClick={openBuilds} aria-label="Browse your saved builds">
+          <DoodleBorder interactive />
+          <span>Builds</span>
+        </button>
+      </DoodleTooltip>
     </>
   );
 
@@ -1277,9 +1319,15 @@ export default function App() {
                   <button onClick={() => openBuild(s.id)} disabled={current}>
                     {current ? "Current" : "Open"}
                   </button>
-                  <button className="build-del" onClick={() => removeBuild(s.id)} title="Delete build">
-                    ×
-                  </button>
+                  <DoodleTooltip content="Delete build">
+                    <button
+                      className="build-del"
+                      onClick={() => removeBuild(s.id)}
+                      aria-label="Delete build"
+                    >
+                      ×
+                    </button>
+                  </DoodleTooltip>
                 </li>
               );
             })}
@@ -1290,6 +1338,7 @@ export default function App() {
   );
 
   return (
+    <DoodleTooltipProvider>
     <div className={`app${mobile ? " mobile" : ""}`}>
       <canvas
         ref={canvasRef}
@@ -1305,10 +1354,50 @@ export default function App() {
       {/* Transport — floating top-center */}
       <div className="panel transport">
         <DoodleBorder strokeWidth={2.5} />
-        <button onClick={play} disabled={!simReady || state === "running"} title={simReady ? "Play" : "Loading physics…"}><DoodleBorder interactive /><Icon name="play" /></button>
-        <button onClick={pause} disabled={!ready || state !== "running"} title="Pause"><DoodleBorder interactive /><Icon name="pause" /></button>
-        <button onClick={reset} disabled={!ready || state === "build"} title="Reset"><DoodleBorder interactive /><Icon name="reset" /></button>
-        <button onClick={fitView} disabled={!ready} title="Fit view to room"><DoodleBorder interactive /><Icon name="fit" /></button>
+        <DoodleTooltip content={simReady ? "Play" : "Loading physics…"}>
+          <span className="doodle-tooltip-trigger">
+            <button
+              onClick={play}
+              disabled={!simReady || state === "running"}
+              aria-label="Play"
+            >
+              <DoodleBorder interactive />
+              <Icon name="play" />
+            </button>
+          </span>
+        </DoodleTooltip>
+        <DoodleTooltip content="Pause">
+          <span className="doodle-tooltip-trigger">
+            <button
+              onClick={pause}
+              disabled={!ready || state !== "running"}
+              aria-label="Pause"
+            >
+              <DoodleBorder interactive />
+              <Icon name="pause" />
+            </button>
+          </span>
+        </DoodleTooltip>
+        <DoodleTooltip content="Reset">
+          <span className="doodle-tooltip-trigger">
+            <button
+              onClick={reset}
+              disabled={!ready || state === "build"}
+              aria-label="Reset"
+            >
+              <DoodleBorder interactive />
+              <Icon name="reset" />
+            </button>
+          </span>
+        </DoodleTooltip>
+        <DoodleTooltip content="Fit view to room">
+          <span className="doodle-tooltip-trigger">
+            <button onClick={fitView} disabled={!ready} aria-label="Fit view to room">
+              <DoodleBorder interactive />
+              <Icon name="fit" />
+            </button>
+          </span>
+        </DoodleTooltip>
         <span className="state">{ready ? state : "loading…"}</span>
       </div>
 
@@ -1391,5 +1480,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </DoodleTooltipProvider>
   );
 }
