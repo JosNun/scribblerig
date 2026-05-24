@@ -8,6 +8,14 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 // the unit tests, so leave it out when Vitest is driving the config.
 export default defineConfig({
   plugins: [react(), ...(process.env.VITEST ? [] : [cloudflare()])],
+  build: {
+    // Rapier's `-compat` variant inlines its WASM as base64, weighing ~1.5 MB
+    // on its own. It's dynamic-imported from `sim.ts` so the initial chunk
+    // stays small (~120 KB gzip), but the rapier chunk itself unavoidably
+    // exceeds Vite's default 500 KB warning. Lift the limit past Rapier's
+    // size so the warning only fires for *new* growth — not the known floor.
+    chunkSizeWarningLimit: 1600,
+  },
   test: {
     globals: true,
     environment: "node",

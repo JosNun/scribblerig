@@ -9,7 +9,11 @@
  * same-machine reset-replay.
  */
 
-import RAPIER from "@dimforge/rapier2d-compat";
+// Type-only namespace import — stripped at build time, so it doesn't pull
+// the 1.5 MB Rapier ES bundle into the initial chunk. The runtime namespace
+// is loaded by `initSim()` below into `R`; every value-position use in this
+// file goes through `R.X`, while type-position uses stay `RAPIER.X`.
+import type * as RAPIER from "@dimforge/rapier2d-compat";
 import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
 import { def, type Props, type Shape } from "../registry/registry";
@@ -40,19 +44,36 @@ export interface SimWorld {
   free(): void;
 }
 
+/**
+ * Runtime Rapier namespace, lazily populated by `initSim()`. `compile` and
+ * everything below assumes `initSim()` has already been awaited (the App
+ * boot path enforces this), so the non-null assertion `R!` reflects that
+ * invariant — using it before `initSim()` resolves is a programmer error.
+ */
+let R: typeof RAPIER | undefined;
 let initialized = false;
 
-/** Load the Rapier WASM module. Must be awaited once before `compile`. */
+/**
+ * Load the Rapier WASM module. Must be awaited once before `compile`.
+ *
+ * Bundle size: Rapier's ES bundle is ~1.5 MB on its own — by far the
+ * heaviest dependency. Static-importing it would put that weight on the
+ * SPA's initial JS payload (every page load, every visitor); dynamic-
+ * importing here moves it into its own chunk, fetched only when the user
+ * actually enters play mode.
+ */
 export async function initSim(): Promise<void> {
   if (initialized) return;
-  await RAPIER.init();
+  const mod = await import("@dimforge/rapier2d-compat");
+  await mod.init();
+  R = mod;
   initialized = true;
 }
 
 /** Compile a design graph into a live Rapier world. */
 export function compile(scene: Scene): SimWorld {
   const room = scene.rooms[0];
-  const world = new RAPIER.World(room.settings.gravity);
+  const world = new R!.World(room.settings.gravity);
   world.timestep = FIXED_DT;
 
   buildBoundaries(world, room.settings.walls, room.settings.size);
@@ -78,7 +99,7 @@ export function compile(scene: Scene): SimWorld {
     },
     setMotor: (connectorId, props) => {
       const joint = joints.get(connectorId);
-      if (joint && joint.type() === RAPIER.JointType.Revolute) {
+      if (joint && joint.type() === R!.JointType.Revolute) {
         configureMotor(joint as RAPIER.RevoluteImpulseJoint, props);
       }
     },
@@ -154,7 +175,7 @@ function buildBodies(
     const fixed = members.some((m) => def(m.type).isStatic(m.props as Props));
 
     const rb = world.createRigidBody(
-      (fixed ? RAPIER.RigidBodyDesc.fixed() : RAPIER.RigidBodyDesc.dynamic())
+      (fixed ? R!.RigidBodyDesc.fixed() : R!.RigidBodyDesc.dynamic())
         .setTranslation(ref.position.x, ref.position.y)
         .setRotation(ref.rotation),
     );
@@ -269,7 +290,7 @@ function compileConnector(
   let jointData: RAPIER.JointData;
   if (conn.type === "spring") {
     const restLength = num(props.restLength, dist(worldA, worldB));
-    jointData = RAPIER.JointData.spring(
+    jointData = R!.JointData.spring(
       restLength,
       num(props.stiffness, 80),
       num(props.damping, 3),
@@ -280,13 +301,13 @@ function compileConnector(
     // A hinge: each body is anchored at its own attach point, and the joint
     // holds those points coincident (click-to-place makes them the same point).
     // A motor is the same revolute joint with a velocity drive added below.
-    jointData = RAPIER.JointData.revolute(anchorA, anchorB);
+    jointData = R!.JointData.revolute(anchorA, anchorB);
   } else {
     // weld to a fixed world point (a body welded to nothing): lock the body in
     // its current pose. Welds *between two bodies* never reach here — they merge
     // into one compound body and are skipped by the same-rigid-body guard above.
     const weldPt = worldA;
-    jointData = RAPIER.JointData.fixed(
+    jointData = R!.JointData.fixed(
       toLocalPt(hostA, weldPt),
       0,
       toLocalPt(hostB, weldPt),
@@ -315,7 +336,7 @@ function compileConnector(
  */
 function configureMotor(joint: RAPIER.RevoluteImpulseJoint, props: Props): void {
   const target = (props.reverse === true ? -1 : 1) * num(props.speed, 0);
-  joint.configureMotorModel(RAPIER.MotorModel.AccelerationBased);
+  joint.configureMotorModel(R!.MotorModel.AccelerationBased);
   joint.configureMotorVelocity(target, num(props.torque, 1));
 }
 
@@ -340,7 +361,7 @@ function endHost(
     return { rb: pl.rb, pos: { x: t.x, y: t.y }, rot: pl.rb.rotation(), anchor };
   }
   const rb = world.createRigidBody(
-    RAPIER.RigidBodyDesc.fixed().setTranslation(ep.world.x, ep.world.y),
+    R!.RigidBodyDesc.fixed().setTranslation(ep.world.x, ep.world.y),
   );
   return { rb, pos: ep.world, rot: 0, anchor: { x: 0, y: 0 } };
 }
@@ -367,9 +388,9 @@ function dist(a: Vec2, b: Vec2): number {
 function colliderDesc(shape: Shape): RAPIER.ColliderDesc {
   switch (shape.kind) {
     case "circle":
-      return RAPIER.ColliderDesc.ball(shape.radius);
+      return R!.ColliderDesc.ball(shape.radius);
     case "box":
-      return RAPIER.ColliderDesc.cuboid(shape.halfWidth, shape.halfHeight);
+      return R!.ColliderDesc.cuboid(shape.halfWidth, shape.halfHeight);
   }
 }
 
@@ -397,9 +418,9 @@ function addWall(
   halfY: number,
 ): void {
   const rb = world.createRigidBody(
-    RAPIER.RigidBodyDesc.fixed().setTranslation(cx, cy),
+    R!.RigidBodyDesc.fixed().setTranslation(cx, cy),
   );
-  world.createCollider(RAPIER.ColliderDesc.cuboid(halfX, halfY), rb);
+  world.createCollider(R!.ColliderDesc.cuboid(halfX, halfY), rb);
 }
 
 function num(value: number | boolean | undefined, fallback: number): number {
