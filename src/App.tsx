@@ -60,6 +60,7 @@ import {
   type HandleId,
 } from "./editor/editor";
 import { snap as snapEndpoint, endpointOf, type SnapResult } from "./snapping/snapping";
+import { createHistory } from "./history/history";
 import { BodyPreview } from "./ui/BodyPreview";
 import { ConnectorPreview } from "./ui/ConnectorPreview";
 import { DoodleBorder } from "./ui/DoodleBorder";
@@ -159,6 +160,10 @@ export default function App() {
   const [boot] = useState(bootSession);
   const sessionIdRef = useRef<string>(boot.id);
   const sceneRef = useRef<Scene>(boot.scene);
+  // Undo/redo stack. Atomic mutations go through `commitScene`; drags capture
+  // `gestureStartRef` at pointerdown so the whole gesture lands as one entry.
+  const historyRef = useRef(createHistory());
+  const gestureStartRef = useRef<Scene | null>(null);
   const selectedRef = useRef<string | null>(null);
   // Copy/paste/duplicate (issue 17). The in-app clipboard is a deep body
   // snapshot — the permission-free primary source for paste; copy also writes
@@ -212,6 +217,56 @@ export default function App() {
   const [ghost, setGhost] = useState<{ type: BodyType; x: number; y: number; droppable: boolean } | null>(null);
   const [revision, setRevision] = useState(0);
   const bump = () => setRevision((r) => r + 1);
+
+  /**
+   * Atomic mutation entry point: write `next` to the live scene, push an undo
+   * entry, re-render. `mergeKey` collapses a rapid stream of pushes — slider
+   * scrubs, typing in the title — into one history step (see `history.ts`).
+   */
+  const commitScene = (next: Scene, opts?: { mergeKey?: string }) => {
+    historyRef.current.push(sceneRef.current, next, opts);
+    sceneRef.current = next;
+    bump();
+  };
+  /**
+   * Close out an in-progress gesture (drag, resize, rotate, endpoint re-aim,
+   * connector draw). Pushes one undo entry spanning the whole gesture if the
+   * scene actually changed; otherwise no-ops. The bump is essential — body
+   * drag's pointermove deliberately skips re-renders (the render loop reads
+   * sceneRef directly), so without it nothing else would tick the autosave
+   * effect or refresh the Undo button's disabled state when the drag ends.
+   */
+  const commitGesture = () => {
+    const start = gestureStartRef.current;
+    gestureStartRef.current = null;
+    if (start && start !== sceneRef.current) {
+      historyRef.current.push(start, sceneRef.current);
+      bump();
+    }
+  };
+  const doUndo = () => {
+    if (!building) return;
+    const prev = historyRef.current.undo();
+    if (!prev) return;
+    sceneRef.current = prev;
+    // Selection may have referenced something the undo removed.
+    const sel = selectedRef.current;
+    if (sel && !bodyById(sel) && !connById(sel)) select(null);
+    bump();
+  };
+  const doRedo = () => {
+    if (!building) return;
+    const next = historyRef.current.redo();
+    if (!next) return;
+    sceneRef.current = next;
+    const sel = selectedRef.current;
+    if (sel && !bodyById(sel) && !connById(sel)) select(null);
+    bump();
+  };
+  const undoRef = useRef(doUndo);
+  undoRef.current = doUndo;
+  const redoRef = useRef(doRedo);
+  redoRef.current = doRedo;
   const [shareOpen, setShareOpen] = useState(false);
   // Builds list (saved sessions): null when closed, the snapshot list when open.
   const [builds, setBuilds] = useState<SessionMeta[] | null>(null);
@@ -278,6 +333,11 @@ export default function App() {
   const selectedBody = selected ? (room.bodies.find((b) => b.id === selected) ?? null) : null;
   const selectedConnector = selected ? (room.connectors.find((c) => c.id === selected) ?? null) : null;
   const snapOn = () => sceneRef.current.rooms[0].settings.snap;
+  // Read undo/redo availability fresh each render. `bump()` after every commit
+  // re-renders, so the button disabled state stays in sync without separate
+  // React state mirroring the history stack.
+  const canUndo = building && historyRef.current.canUndo();
+  const canRedo = building && historyRef.current.canRedo();
 
   // ----- boot + resize + render loop -----
   useEffect(() => {
@@ -381,6 +441,10 @@ export default function App() {
       } else if (mod && (e.key === "d" || e.key === "D")) {
         e.preventDefault(); // don't trigger the browser's bookmark shortcut
         duplicateRef.current();
+      } else if (mod && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault(); // don't trigger the browser's history navigation
+        if (e.shiftKey) redoRef.current();
+        else undoRef.current();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         deleteSelectedRef.current();
       }
@@ -464,6 +528,9 @@ export default function App() {
 
   /** Cancel any in-progress single-finger edit (when a 2nd finger lands). */
   const cancelActiveEdit = () => {
+    // A partial drag leaves the scene mutated; landing it as one undo entry
+    // keeps the user in control even when the gesture was aborted.
+    commitGesture();
     connectorStartRef.current = null;
     endpointDragRef.current = null;
     dragOffsetRef.current = null;
@@ -493,6 +560,10 @@ export default function App() {
       return;
     }
     if (!building) return;
+    // Capture the pre-gesture scene up front so any mutation downstream — an
+    // immediate Alt-drag duplicate, a placeOverlap click, or a many-step drag —
+    // collapses into a single undo entry when the gesture ends.
+    gestureStartRef.current = sceneRef.current;
     const raw = worldAt(e);
 
     // Connector tool armed → pin/weld are click-to-place (join overlapping
@@ -695,6 +766,8 @@ export default function App() {
     }
     dragOffsetRef.current = null;
     handleDragRef.current = null;
+    // Land the gesture as one undo entry (no-op if nothing actually changed).
+    commitGesture();
 
     // Cycle-select: a click (no real drag) on something already selected
     // advances to the next stacked object under the point.
@@ -786,33 +859,36 @@ export default function App() {
   const onPropChange = (patch: Props) => {
     const id = selectedRef.current;
     if (!id) return;
+    // Scrubbing one field fires many `onChange`s; the mergeKey collapses the
+    // burst into one undo step per (selection, field key).
+    const keys = Object.keys(patch).join(",");
     const body = bodyById(id);
     if (body) {
-      sceneRef.current = updateBody(sceneRef.current, 0, id, { props: { ...body.props, ...patch } });
+      let next = updateBody(sceneRef.current, 0, id, { props: { ...body.props, ...patch } });
       // Shrinking radius/width/height can move the pivot outside the shape (issue 24).
-      sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
-      bump();
+      next = pruneDetachedConnectors(next, 0);
+      commitScene(next, { mergeKey: `prop:${id}:${keys}` });
       return;
     }
     const conn = connById(id);
     if (conn) {
       const props = { ...conn.props, ...patch };
-      sceneRef.current = updateConnector(sceneRef.current, 0, id, { props });
+      const next = updateConnector(sceneRef.current, 0, id, { props });
       // Push motor tuning into the live joint so speed/direction change mid-run
       // without a Reset. Writing to the scene too keeps a replay consistent.
       if (conn.type === "motor") worldRef.current?.setMotor(id, props);
-      bump();
+      commitScene(next, { mergeKey: `cprop:${id}:${keys}` });
     }
   };
 
   const deleteSelected = () => {
     const id = selectedRef.current;
     if (!building || !id) return;
-    sceneRef.current = bodyById(id)
+    const next = bodyById(id)
       ? removeBodyAndConnectors(sceneRef.current, 0, id)
       : removeConnector(sceneRef.current, 0, id);
+    commitScene(next);
     select(null);
-    bump();
   };
   const deleteSelectedRef = useRef(deleteSelected);
   deleteSelectedRef.current = deleteSelected;
@@ -830,9 +906,8 @@ export default function App() {
       props: { ...snapshot.props },
       position: clampInsideRoom(size, snapshot, position),
     });
-    sceneRef.current = added.scene;
+    commitScene(added.scene);
     select(added.id);
-    bump();
   };
 
   /** A position offset down-right from `from` by the next cascade step. */
@@ -944,9 +1019,8 @@ export default function App() {
       ...newBody,
       position: clampInsideRoom(size, newBody, world),
     });
-    sceneRef.current = added.scene;
+    commitScene(added.scene);
     select(added.id);
-    bump();
   };
 
   // Mobile palette drag-to-place. The strip is natively pan-x scrollable
@@ -996,9 +1070,8 @@ export default function App() {
       ...newBody,
       position: clampInsideRoom(size, newBody, world),
     });
-    sceneRef.current = added.scene;
+    commitScene(added.scene);
     select(added.id);
-    bump();
   };
   const onStripCancel = () => {
     mobileDragStartRef.current = null;
@@ -1056,19 +1129,17 @@ export default function App() {
   };
 
   const onRoomChange = (patch: Partial<RoomSettings>) => {
-    sceneRef.current = updateRoomSettings(sceneRef.current, 0, patch);
-    bump();
+    commitScene(updateRoomSettings(sceneRef.current, 0, patch), { mergeKey: "room" });
   };
 
   // Set or clear `scene.title` (issue og-share/01). Routed through
-  // `bump()` so autosave picks it up immediately — naming a build
-  // should survive a refresh, not just live until the popover closes.
+  // `commitScene` so autosave picks it up immediately and typing collapses
+  // into a single undo step.
   const renameScene = (title: string) => {
     const next = { ...sceneRef.current };
     if (title) next.title = title;
     else delete next.title;
-    sceneRef.current = next;
-    bump();
+    commitScene(next, { mergeKey: "title" });
   };
 
   // ----- saved builds (sessions) -----
@@ -1079,6 +1150,9 @@ export default function App() {
   const adoptScene = (scene: Scene) => {
     reset();
     sceneRef.current = scene;
+    // Different build = different timeline; carrying old undo entries forward
+    // would let Cmd+Z replay them onto a scene they don't belong to.
+    historyRef.current.clear();
     select(null);
     fitView();
     setBuilds(null);
@@ -1199,6 +1273,26 @@ export default function App() {
       <button
         className="palette-connector palette-action"
         data-vaul-no-drag
+        disabled={!canUndo}
+        onClick={doUndo}
+        aria-label="Undo"
+      >
+        <span className="palette-action-glyph"><Icon name="undo" /></span>
+        <span>Undo</span>
+      </button>
+      <button
+        className="palette-connector palette-action"
+        data-vaul-no-drag
+        disabled={!canRedo}
+        onClick={doRedo}
+        aria-label="Redo"
+      >
+        <span className="palette-action-glyph"><Icon name="redo" /></span>
+        <span>Redo</span>
+      </button>
+      <button
+        className="palette-connector palette-action"
+        data-vaul-no-drag
         disabled={!building || !selected || !bodyById(selected)}
         onClick={duplicateSelection}
         aria-label="Duplicate"
@@ -1223,6 +1317,32 @@ export default function App() {
   // the palette strip so they're reachable on the peek snap.
   const editActionsEls = (
     <>
+      <DoodleTooltip content="Undo">
+        <span className="doodle-tooltip-trigger">
+          <button
+            className="icon-btn"
+            onClick={doUndo}
+            disabled={!canUndo}
+            aria-label="Undo"
+          >
+            <DoodleBorder interactive />
+            <Icon name="undo" />
+          </button>
+        </span>
+      </DoodleTooltip>
+      <DoodleTooltip content="Redo">
+        <span className="doodle-tooltip-trigger">
+          <button
+            className="icon-btn"
+            onClick={doRedo}
+            disabled={!canRedo}
+            aria-label="Redo"
+          >
+            <DoodleBorder interactive />
+            <Icon name="redo" />
+          </button>
+        </span>
+      </DoodleTooltip>
       <DoodleTooltip content="Duplicate">
         <span className="doodle-tooltip-trigger">
           <button

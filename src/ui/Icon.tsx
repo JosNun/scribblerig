@@ -5,6 +5,8 @@ import fitUrl from "../assets/icons/interface/maximize.svg";
 import deleteUrl from "../assets/icons/interface/delete.svg";
 import linkUrl from "../assets/icons/interface/link.svg";
 import copyUrl from "../assets/icons/interface/copy.svg";
+import undoUrl from "../assets/icons/interface/backward.svg";
+import redoUrl from "../assets/icons/interface/forward.svg";
 
 // The icon SVGs ship with a hardcoded black fill, so we paint them as a CSS
 // mask over `currentColor` instead of dropping them in as <img>. That way they
@@ -19,6 +21,8 @@ const ICONS = {
   delete: deleteUrl,
   link: linkUrl,
   copy: copyUrl,
+  undo: undoUrl,
+  redo: redoUrl,
 } as const;
 
 export type IconName = keyof typeof ICONS;
