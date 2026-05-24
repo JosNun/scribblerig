@@ -198,7 +198,13 @@ export default function App() {
   const expandRunningRef = useRef(false);
   const expandReleaseRef = useRef<number | null>(null);
 
+  // `ready` is renderer-ready (the canvas + draw loop exist); set on first
+  // frame. `simReady` is Rapier-WASM-loaded; set when the background
+  // `initSim()` resolves. Splitting these two lets the editor be interactive
+  // immediately while Rapier (~1.5 MB) streams in alongside — by the time
+  // the user hits Play it's already loaded.
   const [ready, setReady] = useState(false);
+  const [simReady, setSimReady] = useState(false);
   const [state, setState] = useState<ClockState>("build");
   const [selected, setSelected] = useState<string | null>(null);
   const [connectorTool, setConnectorTool] = useState<ConnectorType | null>(null);
@@ -302,7 +308,9 @@ export default function App() {
     };
 
     (async () => {
-      await initSim();
+      // Renderer mounts immediately — it only needs the canvas, not Rapier.
+      // The draw loop reads designTransforms() in build mode (no physics)
+      // and only touches `worldRef.current` once Play has been pressed.
       if (disposed || !canvasRef.current) return;
       rendererRef.current = createRenderer(canvasRef.current, cameraRef.current);
       resize();
@@ -330,6 +338,14 @@ export default function App() {
       };
       raf = requestAnimationFrame(frame);
     })();
+
+    // Kick off Rapier's WASM load in parallel — it doesn't gate the editor.
+    // `initSim()` is idempotent, so calling it again from `play()` is a no-op
+    // once this resolves; the Play button stays disabled until then so the
+    // user can't try to compile before the world is available.
+    initSim().then(() => {
+      if (!disposed) setSimReady(true);
+    });
 
     window.addEventListener("resize", resize);
     // Native (non-passive) so we can preventDefault the page from scroll-zooming.
@@ -1289,7 +1305,7 @@ export default function App() {
       {/* Transport — floating top-center */}
       <div className="panel transport">
         <DoodleBorder strokeWidth={2.5} />
-        <button onClick={play} disabled={!ready || state === "running"} title="Play"><DoodleBorder interactive /><Icon name="play" /></button>
+        <button onClick={play} disabled={!simReady || state === "running"} title={simReady ? "Play" : "Loading physics…"}><DoodleBorder interactive /><Icon name="play" /></button>
         <button onClick={pause} disabled={!ready || state !== "running"} title="Pause"><DoodleBorder interactive /><Icon name="pause" /></button>
         <button onClick={reset} disabled={!ready || state === "build"} title="Reset"><DoodleBorder interactive /><Icon name="reset" /></button>
         <button onClick={fitView} disabled={!ready} title="Fit view to room"><DoodleBorder interactive /><Icon name="fit" /></button>
