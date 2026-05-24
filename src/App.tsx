@@ -869,13 +869,17 @@ export default function App() {
     spawnClone(snapshot, at);
   };
 
-  /** Cmd/Ctrl+D and the mobile button: duplicate the current selection in place. */
+  /** Cmd/Ctrl+D and the mobile button: duplicate the current selection. */
   const duplicateSelection = () => {
     const id = selectedRef.current;
     if (!building || !id) return;
     const body = bodyById(id);
     if (!body) return;
-    spawnClone(body, cascadeFrom(body.position));
+    // Fixed step off the current selection — not the paste cascade. Because
+    // spawnClone selects the new body, repeated Cmd+D walks a clean staircase
+    // off whichever piece is selected now, so moving the selection (or picking
+    // a different one) naturally rebases without the offset compounding.
+    spawnClone(body, { x: body.position.x + CASCADE, y: body.position.y - CASCADE });
   };
 
   const copyRef = useRef(copySelection);
