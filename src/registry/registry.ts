@@ -138,11 +138,33 @@ const PLATFORM: BodyTypeDef = {
   style: { fill: "#9b8466", fillStyle: "cross-hatch" },
 };
 
+// A small fixed-size glyph (~0.5 m) that emits copies of a template subgraph
+// while the sim runs (issue 19). Configured by selecting it: a popover opens
+// next to the glyph with a tiny canvas for authoring the template. Rotating
+// the spawner aims its launch direction; emission inherits its motion at the
+// emit point so a spinning fan naturally flings items outward.
+const SPAWNER: BodyTypeDef = {
+  type: "spawner",
+  label: "Spawner",
+  defaults: { interval: 1.0, maxAlive: 10, speed: 0, static: false },
+  isStatic: (p) => p.static === true,
+  shapes: () => [{ kind: "box", halfWidth: 0.25, halfHeight: 0.25 }],
+  propSchema: [
+    { key: "interval", label: "Interval", kind: "number", min: 0.05, max: 30, step: 0.05, help: "Seconds between emissions while the simulation runs. Lower = faster stream." },
+    { key: "maxAlive", label: "Max alive", kind: "number", min: 1, max: 500, step: 1, help: "How many of this spawner's items can be alive at once. Past the cap, the oldest is recycled before a new one appears." },
+    { key: "speed", label: "Speed", kind: "number", min: 0, max: 30, step: 0.5, help: "Launch speed along the spawner's facing, in meters per second. 0 drops items from rest; rotate the spawner to aim." },
+    { key: "static", label: "Static (immovable)", kind: "boolean", help: "When on, the spawner is fixed in place and ignores gravity. Off lets it fall or be carried by a motor arm." },
+  ],
+  anchors: () => [{ name: "center", local: { x: 0, y: 0 } }],
+  style: { fill: "#5e7a9c", fillStyle: "cross-hatch" },
+};
+
 /** Ordered registry; array order is the palette order and is deterministic. */
-const ORDER: BodyTypeDef[] = [BALL, PLATFORM];
+const ORDER: BodyTypeDef[] = [BALL, PLATFORM, SPAWNER];
 const BY_TYPE: Record<BodyType, BodyTypeDef> = {
   ball: BALL,
   platform: PLATFORM,
+  spawner: SPAWNER,
 };
 
 export function bodyTypes(): BodyTypeDef[] {

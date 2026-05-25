@@ -10,8 +10,30 @@ import {
 } from "./registry";
 
 describe("registry", () => {
-  it("offers ball and platform as placeable body types", () => {
-    expect(bodyTypes().map((d) => d.type)).toEqual(["ball", "platform"]);
+  it("offers ball, platform, and spawner as placeable body types", () => {
+    expect(bodyTypes().map((d) => d.type)).toEqual(["ball", "platform", "spawner"]);
+  });
+
+  it("declares a small fixed-size box glyph and the four spawner props", () => {
+    const spawner = def("spawner");
+    expect(spawner.shapes(spawner.defaults)).toEqual([
+      { kind: "box", halfWidth: 0.25, halfHeight: 0.25 },
+    ]);
+    expect(spawner.propSchema.map((f) => f.key)).toEqual([
+      "interval",
+      "maxAlive",
+      "speed",
+      "static",
+    ]);
+    expect(spawner.defaults).toEqual({
+      interval: 1.0,
+      maxAlive: 10,
+      speed: 0,
+      static: false,
+    });
+    // Dynamic by default (so it can ride a motor arm); flips static when the prop is on.
+    expect(spawner.isStatic(spawner.defaults)).toBe(false);
+    expect(spawner.isStatic({ ...spawner.defaults, static: true })).toBe(true);
   });
 
   it("makeBody stamps a body at a position with the type's default props", () => {

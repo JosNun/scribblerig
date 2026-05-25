@@ -11,6 +11,9 @@ import {
   updateConnector,
   removeBodyAndConnectors,
   tracerScene,
+  cloneItem,
+  type Body,
+  type Connector,
 } from "./scene";
 import { makeBody } from "../registry/registry";
 
@@ -212,6 +215,144 @@ describe("connector operations", () => {
     expect(s.rooms[0].bodies.map((x) => x.id)).toEqual([b.id]);
     // Only the spring (which referenced a) is gone; the pin on b remains.
     expect(s.rooms[0].connectors.map((c) => c.type)).toEqual(["pin"]);
+  });
+});
+
+describe("cloneItem", () => {
+  // A small mintId factory that closes over a counter, matching how the live
+  // code wires scene.nextId or a per-spawner sequence into the clone.
+  const minter = (start = 100) => {
+    let n = start;
+    return (kind: "b" | "c"): string => {
+      const out = `${kind}${n}`;
+      n += 1;
+      return out;
+    };
+  };
+
+  it("mints fresh ids for every body and connector", () => {
+    const bodies: Body[] = [
+      { id: "b1", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: { radius: 0.5 } },
+      { id: "b2", type: "ball", position: { x: 1, y: 0 }, rotation: 0, props: { radius: 0.5 } },
+    ];
+    const connectors: Connector[] = [
+      {
+        id: "c1",
+        type: "spring",
+        a: { body: "b1", local: { x: 0, y: 0 } },
+        b: { body: "b2", local: { x: 0, y: 0 } },
+        props: { stiffness: 80 },
+      },
+    ];
+
+    const out = cloneItem({ bodies, connectors }, minter(100));
+
+    expect(out.bodies.map((b) => b.id)).toEqual(["b100", "b101"]);
+    expect(out.connectors.map((c) => c.id)).toEqual(["c102"]);
+    expect(out.idMap.get("b1")).toBe("b100");
+    expect(out.idMap.get("b2")).toBe("b101");
+  });
+
+  it("remaps body-endpoint connectors to the cloned ids", () => {
+    const bodies: Body[] = [
+      { id: "b1", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: {} },
+      { id: "b2", type: "ball", position: { x: 1, y: 0 }, rotation: 0, props: {} },
+    ];
+    const connectors: Connector[] = [
+      {
+        id: "c1",
+        type: "spring",
+        a: { body: "b1", local: { x: 0.1, y: 0 } },
+        b: { body: "b2", local: { x: -0.1, y: 0 } },
+        props: {},
+      },
+    ];
+
+    const out = cloneItem({ bodies, connectors }, minter(100));
+
+    const conn = out.connectors[0];
+    expect((conn.a as { body: string }).body).toBe("b100");
+    expect((conn.b as { body: string }).body).toBe("b101");
+  });
+
+  it("drops connectors whose endpoints reference bodies outside the cloned set", () => {
+    const bodies: Body[] = [
+      { id: "b1", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: {} },
+    ];
+    const connectors: Connector[] = [
+      // self-contained: b1 ↔ world point — kept
+      {
+        id: "c1",
+        type: "spring",
+        a: { body: "b1", local: { x: 0, y: 0 } },
+        b: { world: { x: 3, y: 3 } },
+        props: {},
+      },
+      // cross-scope: references b99 which isn't being cloned — dropped
+      {
+        id: "c2",
+        type: "spring",
+        a: { body: "b1", local: { x: 0, y: 0 } },
+        b: { body: "b99", local: { x: 0, y: 0 } },
+        props: {},
+      },
+    ];
+
+    const out = cloneItem({ bodies, connectors }, minter(100));
+
+    expect(out.connectors).toHaveLength(1);
+    expect(out.connectors[0].id).toBe("c101");
+  });
+
+  it("deep-copies props and positions so editing the clone does not touch the source", () => {
+    const bodies: Body[] = [
+      { id: "b1", type: "ball", position: { x: 1, y: 2 }, rotation: 0, props: { radius: 0.5 } },
+    ];
+
+    const out = cloneItem({ bodies, connectors: [] }, minter(100));
+    out.bodies[0].position.x = 99;
+    out.bodies[0].props.radius = 99;
+
+    expect(bodies[0].position.x).toBe(1);
+    expect(bodies[0].props.radius).toBe(0.5);
+  });
+
+  it("recursively clones a spawner's template with fresh nested ids", () => {
+    const spawner: Body = {
+      id: "b1",
+      type: "spawner",
+      position: { x: 0, y: 0 },
+      rotation: 0,
+      props: { interval: 1, maxAlive: 10, speed: 0 },
+      template: {
+        bodies: [
+          { id: "b2", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: {} },
+          { id: "b3", type: "ball", position: { x: 1, y: 0 }, rotation: 0, props: {} },
+        ],
+        connectors: [
+          {
+            id: "c4",
+            type: "spring",
+            a: { body: "b2", local: { x: 0, y: 0 } },
+            b: { body: "b3", local: { x: 0, y: 0 } },
+            props: {},
+          },
+        ],
+      },
+    };
+
+    const out = cloneItem({ bodies: [spawner], connectors: [] }, minter(100));
+    const clone = out.bodies[0];
+
+    // The top-level spawner gets a fresh id; its template's nested bodies and
+    // connectors also get fresh ids and connectors remap to the new nested ids.
+    expect(clone.id).toBe("b100");
+    expect(clone.template!.bodies.map((b) => b.id)).toEqual(["b101", "b102"]);
+    expect(clone.template!.connectors[0].id).toBe("c103");
+    expect((clone.template!.connectors[0].a as { body: string }).body).toBe("b101");
+    expect((clone.template!.connectors[0].b as { body: string }).body).toBe("b102");
+    // The source template is untouched.
+    expect(spawner.template!.bodies.map((b) => b.id)).toEqual(["b2", "b3"]);
   });
 });
 

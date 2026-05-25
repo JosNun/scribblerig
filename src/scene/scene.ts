@@ -9,7 +9,18 @@
 
 export type Vec2 = { x: number; y: number };
 
-export type BodyType = "ball" | "platform";
+export type BodyType = "ball" | "platform" | "spawner";
+
+/**
+ * The contents a spawner emits during sim: a self-contained subgraph in the
+ * spawner's local frame, with the emit point at template-local (0, 0). Nested
+ * spawners are not allowed (sanitizer strips them) and connectors must
+ * reference only bodies inside the template (sanitizer drops cross-scope refs).
+ */
+export interface BodyTemplate {
+  bodies: Body[];
+  connectors: Connector[];
+}
 
 export interface Body {
   id: string;
@@ -20,6 +31,8 @@ export interface Body {
   rotation: number;
   /** Schema-driven properties (radius, restitution, friction, static?, …). */
   props: Record<string, number | boolean>;
+  /** Spawner-only: the bodies + connectors emitted as copies during sim. */
+  template?: BodyTemplate;
 }
 
 export type ConnectorType = "spring" | "weld" | "pin" | "motor";
@@ -180,11 +193,63 @@ export function updateBody(
 }
 
 /**
- * Clone a body into an independent copy at `position`, minting a fresh id (via
- * {@link addBody}) and deep-copying its props so editing the copy never touches
- * the original. Returns null if no body matches `id`. The shared core behind
- * copy/paste, duplicate, and Alt-drag (issue 17). Connectors aren't cloned —
- * a connector joins *two* bodies, so duplicating one body has no joint to copy.
+ * Deep-clone a self-contained subgraph of bodies + the connectors among them
+ * with fresh ids minted by `mintId`. Connector endpoints whose body isn't in
+ * the cloned set are **dropped** (so the function never produces cross-scope
+ * refs). A spawner's `template` field is recursively cloned with the same
+ * mintId, so the copy is fully independent. The returned `idMap` is from old
+ * → new id for the top-level bodies; nested template ids are remapped
+ * internally and don't escape.
+ *
+ * Used by copy / paste / duplicate (top-level scene clones) and by the sim's
+ * emit step (cloning a template item into the live world each interval).
+ */
+export function cloneItem(
+  src: { bodies: Body[]; connectors: Connector[] },
+  mintId: (kind: "b" | "c") => string,
+): { bodies: Body[]; connectors: Connector[]; idMap: Map<string, string> } {
+  const idMap = new Map<string, string>();
+  const bodies = src.bodies.map((b) => cloneBody(b, mintId, idMap));
+  const connectors: Connector[] = [];
+  for (const c of src.connectors) {
+    const a = remapEndpoint(c.a, idMap);
+    const b = remapEndpoint(c.b, idMap);
+    if (!a || !b) continue;
+    connectors.push({ ...c, id: mintId("c"), a, b, props: { ...c.props } });
+  }
+  return { bodies, connectors, idMap };
+}
+
+function cloneBody(b: Body, mintId: (kind: "b" | "c") => string, idMap: Map<string, string>): Body {
+  const id = mintId("b");
+  idMap.set(b.id, id);
+  const clone: Body = {
+    ...b,
+    id,
+    position: { ...b.position },
+    props: { ...b.props },
+  };
+  if (b.template) {
+    const sub = cloneItem(b.template, mintId);
+    clone.template = { bodies: sub.bodies, connectors: sub.connectors };
+  }
+  return clone;
+}
+
+function remapEndpoint(ep: Endpoint, idMap: Map<string, string>): Endpoint | null {
+  if (isBodyEndpoint(ep)) {
+    const newId = idMap.get(ep.body);
+    if (!newId) return null;
+    return { body: newId, local: { ...ep.local } };
+  }
+  return { world: { ...ep.world } };
+}
+
+/**
+ * Clone a body into an independent copy at `position`, minting a fresh id and
+ * deep-copying its props (and `template`, for spawners) so editing the copy
+ * never touches the original. Returns null if no body matches `id`. Wraps
+ * {@link cloneItem} so all duplicate paths share the same id-remap logic.
  */
 export function duplicateBody(
   scene: Scene,
@@ -194,12 +259,21 @@ export function duplicateBody(
 ): { scene: Scene; id: string } | null {
   const src = scene.rooms[roomIndex].bodies.find((b) => b.id === id);
   if (!src) return null;
-  return addBody(scene, roomIndex, {
-    type: src.type,
-    position,
-    rotation: src.rotation,
-    props: { ...src.props },
-  });
+  let nextId = scene.nextId;
+  const mintId = (kind: "b" | "c"): string => {
+    const out = `${kind}${nextId}`;
+    nextId += 1;
+    return out;
+  };
+  const cloned = cloneItem({ bodies: [src], connectors: [] }, mintId).bodies[0];
+  const placed: Body = { ...cloned, position: { ...position } };
+  const room = scene.rooms[roomIndex];
+  const next = replaceRoom(
+    { ...scene, nextId },
+    roomIndex,
+    { ...room, bodies: [...room.bodies, placed] },
+  );
+  return { scene: next, id: placed.id };
 }
 
 /** Append a connector to a room, minting a deterministic unique id. */

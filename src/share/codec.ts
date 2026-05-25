@@ -17,6 +17,7 @@ import {
   type Scene,
   type RoomSettings,
   type Body,
+  type BodyTemplate,
   type Connector,
   type Endpoint,
   type Vec2,
@@ -101,13 +102,32 @@ function sanitizeBody(raw: unknown): Body | null {
   const type = raw.type;
   if (!knownBody(type)) return null;
   const d = def(type);
-  return {
+  const out: Body = {
     id: raw.id,
     type,
     position: vec2(raw.position, { x: 0, y: 0 }),
     rotation: num(raw.rotation, 0),
     props: sanitizeProps(d.propSchema, d.defaults, raw.props),
   };
+  // Only spawners carry a template; other types' `template` (if smuggled in) is
+  // silently dropped. Nested templates are flattened: a spawner inside a
+  // template is stripped (no recursion), connectors with cross-scope refs are
+  // dropped against the post-sanitize id set.
+  if (type === "spawner" && isObj(raw.template)) {
+    out.template = sanitizeTemplate(raw.template);
+  }
+  return out;
+}
+
+function sanitizeTemplate(raw: Record<string, unknown>): BodyTemplate {
+  const bodies = asArray(raw.bodies)
+    .map(sanitizeBody)
+    .filter((b): b is Body => b !== null && b.type !== "spawner");
+  const ids = new Set(bodies.map((b) => b.id));
+  const connectors = asArray(raw.connectors)
+    .map((c) => sanitizeConnector(c, ids))
+    .filter((c): c is Connector => c !== null);
+  return { bodies, connectors };
 }
 
 function sanitizeConnector(raw: unknown, bodyIds: Set<string>): Connector | null {
@@ -162,13 +182,25 @@ function sanitizeSettings(raw: unknown): RoomSettings {
   };
 }
 
-/** Next free id = past the stored counter and past every surviving id's number. */
+/**
+ * Next free id = past the stored counter and past every surviving id's number,
+ * including ids nested inside any spawner template (which share the same
+ * scene-wide counter).
+ */
 function computeNextId(rawNextId: unknown, bodies: Body[], connectors: Connector[]): number {
   let n = num(rawNextId, 1);
-  for (const el of [...bodies, ...connectors]) {
-    const m = /(\d+)$/.exec(el.id);
+  const bump = (id: string): void => {
+    const m = /(\d+)$/.exec(id);
     if (m) n = Math.max(n, parseInt(m[1], 10) + 1);
-  }
+  };
+  const visit = (bs: Body[], cs: Connector[]): void => {
+    for (const b of bs) {
+      bump(b.id);
+      if (b.template) visit(b.template.bodies, b.template.connectors);
+    }
+    for (const c of cs) bump(c.id);
+  };
+  visit(bodies, connectors);
   return n;
 }
 
