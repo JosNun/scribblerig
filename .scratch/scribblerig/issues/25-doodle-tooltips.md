@@ -1,6 +1,6 @@
 # 25 — Doodle-styled tooltips with grouped warm-up timing
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
