@@ -15,7 +15,7 @@ import {
   handleAtPoint,
   type HandleId,
 } from "../editor/editor";
-import { fitCamera, screenToWorld, type Camera } from "../renderer/camera";
+import { screenToWorld, type Camera } from "../renderer/camera";
 import { createRenderer, type Renderer } from "../renderer/renderer";
 import type { BodyTransform } from "../sim/sim";
 
@@ -46,9 +46,6 @@ const POPOVER_W = 220;
 const POPOVER_H = 220;
 const CANVAS_W = 200;
 const CANVAS_H = 130;
-/** Minimum framed area (meters) in the mini canvas — keeps an empty template
- *  from showing as a void and gives the crosshair some breathing room. */
-const MIN_FRAME = 2.0;
 /** Margin (px) between the popover and the spawner glyph. */
 const ANCHOR_GAP = 14;
 /** Pixel tolerance for grabbing a handle on the selected template body. */
@@ -74,6 +71,10 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   template: BodyTemplate;
   /** Spawner glyph's screen position (computed from main camera). */
   anchor: { x: number; y: number };
+  /** Pixels-per-meter of the main canvas. The popover renders the template at
+   *  this exact scale so an item's preview size matches what comes out in the
+   *  room — no more "items emerge bigger than they looked here". */
+  mainScale: number;
   /** Currently-selected template body id, or null. Drives the selection
    *  chrome + handles drawn by the mini renderer. */
   selectedId: string | null;
@@ -95,6 +96,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   {
     template,
     anchor,
+    mainScale,
     selectedId,
     hidden,
     onSelect,
@@ -138,26 +140,23 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     if (!canvas) return;
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
-    const cam = fitTemplate(template.bodies, CANVAS_W, CANVAS_H);
+    const cam = popoverCamera(mainScale, CANVAS_W, CANVAS_H);
     cameraRef.current = cam;
     rendererRef.current = createRenderer(canvas, cam, { grid: false });
   }, []);
 
-  // Redraw on every template / selection change so the user sees the latest
-  // pose. The camera, however, only re-fits between gestures — re-fitting on
-  // every drag frame would make the canvas "zoom out" as the user pulls a
-  // body away from the origin, and the dancing frame is more disorienting
-  // than a body that briefly extends past the edge.
+  // Mirror the main canvas's px/m exactly. Origin sits at the canvas center,
+  // so template (0, 0) is the visible chute reference. Tracking the main
+  // scale also means pan/zoom on the main canvas updates the preview, which
+  // matters because App.tsx bumps on every applyCamera so this effect re-runs.
   useEffect(() => {
     const r = rendererRef.current;
     if (!r) return;
-    if (!dragRef.current) {
-      const cam = fitTemplate(template.bodies, CANVAS_W, CANVAS_H);
-      cameraRef.current = cam;
-      r.setCamera(cam);
-    }
+    const cam = popoverCamera(mainScale, CANVAS_W, CANVAS_H);
+    cameraRef.current = cam;
+    r.setCamera(cam);
     r.draw(synthScene(template), designTransforms(template.bodies), selectedId);
-  }, [template, selectedId]);
+  }, [template, selectedId, mainScale]);
 
   useImperativeHandle(
     ref,
@@ -380,52 +379,12 @@ function cloneStartBody(b: Body): Body {
   };
 }
 
-/** Center the template in the mini-canvas at a comfortable scale. */
-function fitTemplate(bodies: Body[], w: number, h: number): Camera {
-  if (bodies.length === 0) {
-    return centeredCamera(MIN_FRAME, MIN_FRAME, w, h);
-  }
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const b of bodies) {
-    let bhw = 0;
-    let bhh = 0;
-    for (const s of def(b.type).shapes(b.props as Props)) {
-      if (s.kind === "circle") {
-        bhw = Math.max(bhw, s.radius);
-        bhh = Math.max(bhh, s.radius);
-      } else {
-        bhw = Math.max(bhw, s.halfWidth);
-        bhh = Math.max(bhh, s.halfHeight);
-      }
-    }
-    const c = Math.abs(Math.cos(b.rotation));
-    const sn = Math.abs(Math.sin(b.rotation));
-    const ax = bhw * c + bhh * sn;
-    const ay = bhw * sn + bhh * c;
-    minX = Math.min(minX, b.position.x - ax);
-    maxX = Math.max(maxX, b.position.x + ax);
-    minY = Math.min(minY, b.position.y - ay);
-    maxY = Math.max(maxY, b.position.y + ay);
-  }
-  // Always include the origin and add a margin so newly-added items aren't
-  // glued to the edge as the frame grows.
-  const halfExtent = Math.max(
-    MIN_FRAME / 2,
-    Math.abs(minX), Math.abs(maxX), Math.abs(minY), Math.abs(maxY),
-  ) + 0.5;
-  return centeredCamera(halfExtent * 2, halfExtent * 2, w, h);
-}
-
-/** A camera centered on template (0, 0) framing a `fw × fh` meter area. */
-function centeredCamera(fw: number, fh: number, viewW: number, viewH: number): Camera {
-  // Reuse fitCamera's scale math (it'd put the room frame's center off because
-  // it assumes y ∈ [0, fh]), then override originX/originY to put template
-  // (0, 0) at the canvas middle.
-  const cam = fitCamera(fw, fh, viewW, viewH, 0.1);
-  return { scale: cam.scale, originX: viewW / 2, originY: viewH / 2 };
+/** A camera at the main canvas's px/m, centered on template (0, 0). The
+ *  popover is intentionally small; if the template ever grew larger than
+ *  what fits at this scale, items would extend past the edge — a soft
+ *  reminder to keep templates compact. */
+function popoverCamera(mainScale: number, viewW: number, viewH: number): Camera {
+  return { scale: mainScale, originX: viewW / 2, originY: viewH / 2 };
 }
 
 /** A throwaway scene wrapping the template, used to feed the existing Renderer

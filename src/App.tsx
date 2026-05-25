@@ -536,11 +536,14 @@ export default function App() {
   const worldAt = (e: React.PointerEvent) => screenToWorld(cameraRef.current, pointerInCanvas(e));
 
   // ----- camera (pan / zoom) -----
-  /** Adopt a new camera and redraw under it (marks the view as user-adjusted). */
+  /** Adopt a new camera and redraw under it (marks the view as user-adjusted).
+   *  Also bumps React so anything anchored to screen coordinates (the spawner
+   *  popover's position + its mini-camera scale) tracks the new view. */
   const applyCamera = (next: Camera) => {
     viewAdjustedRef.current = true;
     cameraRef.current = next;
     rendererRef.current?.setCamera(next);
+    bump();
   };
   /** Zoom about a point, holding the resulting scale within the zoom limits. */
   const zoomClamped = (cam: Camera, at: { x: number; y: number }, factor: number): Camera => {
@@ -1731,6 +1734,7 @@ export default function App() {
             const rect = canvasRef.current.getBoundingClientRect();
             return { x: screen.x + rect.left, y: screen.y + rect.top };
           })()}
+          mainScale={cameraRef.current.scale}
           selectedId={templateSelected}
           hidden={spawnerInteracting}
           onSelect={setTemplateSelected}
