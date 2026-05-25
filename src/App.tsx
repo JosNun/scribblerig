@@ -11,6 +11,7 @@ import {
   removeBodyAndConnectors,
   addBodyToTemplate,
   removeBodyFromTemplate,
+  updateBodyInTemplate,
   isBodyEndpoint,
   type Scene,
   type Body,
@@ -71,7 +72,7 @@ import { Icon } from "./ui/Icon";
 import { PropertyPanel } from "./ui/PropertyPanel";
 import { RoomSettingsPanel } from "./ui/RoomSettingsPanel";
 import { SharePopover } from "./ui/SharePopover";
-import { SpawnerPopover } from "./ui/SpawnerPopover";
+import { SpawnerPopover, type SpawnerPopoverHandle } from "./ui/SpawnerPopover";
 
 /** Coarse pointers (touch) get larger hit tolerances so fingers can grab handles. */
 const COARSE = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
@@ -223,6 +224,10 @@ export default function App() {
   // (React re-renders only on bump / state changes, not on every drag move).
   // Pointerup clears this; the popover reappears at the spawner's new pose.
   const [spawnerInteracting, setSpawnerInteracting] = useState(false);
+  // Imperative handle into the open SpawnerPopover so onPaletteUp/onStripUp
+  // can ask "is the pointer over your mini-canvas, and if so where?" to
+  // route cross-scope drops into the template instead of the scene.
+  const spawnerPopoverRef = useRef<SpawnerPopoverHandle | null>(null);
   const [revision, setRevision] = useState(0);
   const bump = () => setRevision((r) => r + 1);
 
@@ -598,6 +603,9 @@ export default function App() {
       const handle = handleAtPoint(sel, raw, HANDLE_PX / cameraRef.current.scale);
       if (handle) {
         handleDragRef.current = handle;
+        // Same rationale as the body-drag hide (issue 19): the popover anchor
+        // and aim arrow would lag the glyph mid-gesture.
+        if (sel.type === "spawner") setSpawnerInteracting(true);
         capture(canvasRef.current, e.pointerId);
         return;
       }
@@ -779,7 +787,10 @@ export default function App() {
     }
     dragOffsetRef.current = null;
     handleDragRef.current = null;
-    if (spawnerInteracting) setSpawnerInteracting(false);
+    // Unconditional — React no-ops if already false. A conditional read would
+    // see the stale closure value when pointerdown + pointerup land in the
+    // same React tick (e.g. very fast clicks, or scripted interactions).
+    setSpawnerInteracting(false);
     // Land the gesture as one undo entry (no-op if nothing actually changed).
     commitGesture();
 
@@ -1003,27 +1014,34 @@ export default function App() {
     draggedOffRef.current = false;
     capture(e.currentTarget as HTMLElement, e.pointerId);
   };
-  const onPaletteMove = (e: React.PointerEvent) => {
-    if (!placingRef.current) return;
-    const r = paletteOriginRef.current;
-    if (r && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) {
-      draggedOffRef.current = true;
-    }
-    if (!draggedOffRef.current) {
-      setGhost(null);
-      return;
-    }
-    const droppable = document.elementFromPoint(e.clientX, e.clientY) === canvasRef.current;
-    setGhost({ type: placingRef.current, x: e.clientX, y: e.clientY, droppable });
+  // A drop is valid if the pointer lands on the main canvas OR on the open
+  // spawner-popover canvas (which routes the body into the template — issue
+  // 19 drop-target-decides-scope). Used by the palette ghost and the drop
+  // handler below.
+  const isDroppableAt = (clientX: number, clientY: number): boolean => {
+    if (document.elementFromPoint(clientX, clientY) === canvasRef.current) return true;
+    return spawnerPopoverRef.current?.pointToTemplate(clientX, clientY) != null;
   };
-  const onPaletteUp = (e: React.PointerEvent) => {
-    const type = placingRef.current;
-    const draggedOff = draggedOffRef.current;
-    placingRef.current = null;
-    paletteOriginRef.current = null;
-    draggedOffRef.current = false;
-    setGhost(null);
-    if (!type || !building || !draggedOff) return;
+
+  /**
+   * Drop one body at the pointer position. If the pointer is over the open
+   * spawner popover, add to that spawner's template (in template-local
+   * coords); otherwise add to the scene as today. Selection moves to the
+   * newly-added body only for scene drops — template drops leave the spawner
+   * selected so the popover stays open and the user can keep authoring.
+   */
+  const dropBodyAtPointer = (type: BodyType, e: React.PointerEvent) => {
+    if (!building) return;
+    const selected = selectedRef.current ? bodyById(selectedRef.current) : null;
+    if (selected?.type === "spawner") {
+      const templatePoint = spawnerPopoverRef.current?.pointToTemplate(e.clientX, e.clientY);
+      if (templatePoint) {
+        const newBody = makeBody(type, templatePoint);
+        const added = addBodyToTemplate(sceneRef.current, 0, selected.id, newBody);
+        if (added) commitScene(added.scene);
+        return;
+      }
+    }
     if (document.elementFromPoint(e.clientX, e.clientY) !== canvasRef.current) return;
     const raw = worldAt(e);
     const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
@@ -1035,6 +1053,29 @@ export default function App() {
     });
     commitScene(added.scene);
     select(added.id);
+  };
+
+  const onPaletteMove = (e: React.PointerEvent) => {
+    if (!placingRef.current) return;
+    const r = paletteOriginRef.current;
+    if (r && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) {
+      draggedOffRef.current = true;
+    }
+    if (!draggedOffRef.current) {
+      setGhost(null);
+      return;
+    }
+    setGhost({ type: placingRef.current, x: e.clientX, y: e.clientY, droppable: isDroppableAt(e.clientX, e.clientY) });
+  };
+  const onPaletteUp = (e: React.PointerEvent) => {
+    const type = placingRef.current;
+    const draggedOff = draggedOffRef.current;
+    placingRef.current = null;
+    paletteOriginRef.current = null;
+    draggedOffRef.current = false;
+    setGhost(null);
+    if (!type || !draggedOff) return;
+    dropBodyAtPointer(type, e);
   };
 
   // Mobile palette drag-to-place. The strip is natively pan-x scrollable
@@ -1065,8 +1106,7 @@ export default function App() {
       draggedOffRef.current = true;
       capture(e.currentTarget as HTMLElement, e.pointerId);
     }
-    const droppable = document.elementFromPoint(e.clientX, e.clientY) === canvasRef.current;
-    setGhost({ type: placingRef.current!, x: e.clientX, y: e.clientY, droppable });
+    setGhost({ type: placingRef.current!, x: e.clientX, y: e.clientY, droppable: isDroppableAt(e.clientX, e.clientY) });
   };
   const onStripUp = (e: React.PointerEvent) => {
     const type = placingRef.current;
@@ -1074,18 +1114,8 @@ export default function App() {
     placingRef.current = null;
     draggedOffRef.current = false;
     setGhost(null);
-    if (!type || !building) return;
-    if (document.elementFromPoint(e.clientX, e.clientY) !== canvasRef.current) return;
-    const raw = worldAt(e);
-    const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
-    const newBody = makeBody(type, world);
-    const size = sceneRef.current.rooms[0].settings.size;
-    const added = addBody(sceneRef.current, 0, {
-      ...newBody,
-      position: clampInsideRoom(size, newBody, world),
-    });
-    commitScene(added.scene);
-    select(added.id);
+    if (!type) return;
+    dropBodyAtPointer(type, e);
   };
   const onStripCancel = () => {
     mobileDragStartRef.current = null;
@@ -1649,22 +1679,33 @@ export default function App() {
           template. */}
       {building && selectedBody?.type === "spawner" && canvasRef.current && (
         <SpawnerPopover
+          ref={spawnerPopoverRef}
           template={selectedBody.template ?? { bodies: [], connectors: [] }}
           anchor={(() => {
             const screen = worldToScreen(cameraRef.current, selectedBody.position);
             const rect = canvasRef.current.getBoundingClientRect();
             return { x: screen.x + rect.left, y: screen.y + rect.top };
           })()}
+          rotation={selectedBody.rotation}
           hidden={spawnerInteracting}
-          onAdd={(type, position) => {
-            const id = selectedBody.id;
-            const newBody = makeBody(type, position);
-            const added = addBodyToTemplate(sceneRef.current, 0, id, newBody);
-            if (added) commitScene(added.scene);
+          onBeginGesture={() => {
+            // Capture the pre-gesture scene so the whole drag lands as a
+            // single undo entry, mirroring the canvas body-drag lifecycle.
+            gestureStartRef.current = sceneRef.current;
           }}
+          onMoveBody={(bodyId, position) => {
+            sceneRef.current = updateBodyInTemplate(
+              sceneRef.current,
+              0,
+              selectedBody.id,
+              bodyId,
+              { position },
+            );
+            bump();
+          }}
+          onCommitGesture={commitGesture}
           onRemove={(bodyId) => {
-            const id = selectedBody.id;
-            commitScene(removeBodyFromTemplate(sceneRef.current, 0, id, bodyId));
+            commitScene(removeBodyFromTemplate(sceneRef.current, 0, selectedBody.id, bodyId));
           }}
         />
       )}

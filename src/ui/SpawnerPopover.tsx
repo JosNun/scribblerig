@@ -1,55 +1,83 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Body, BodyTemplate, Vec2 } from "../scene/scene";
-import { bodyTypes, def, type Props } from "../registry/registry";
-import { fitCamera, type Camera } from "../renderer/camera";
+import { def, type Props } from "../registry/registry";
+import { bodyAtPoint } from "../editor/editor";
+import { fitCamera, screenToWorld, type Camera } from "../renderer/camera";
 import { createRenderer, type Renderer } from "../renderer/renderer";
 import type { BodyTransform } from "../sim/sim";
-import { BodyPreview } from "./BodyPreview";
 
 /**
  * Small popover anchored to a selected spawner's glyph, showing a read-only
- * mini-canvas of its template plus a row of body-type tiles for authoring
- * (issue 19). Deliberately small — the size itself is a soft nudge toward
- * small templates. Open while a spawner is selected in design mode; hidden
- * while the spawner is being dragged or rotated (parent controls via
- * `hidden`).
+ * mini-canvas of its template (issue 19). Deliberately small — the size
+ * itself is a soft nudge toward small templates. Open while a spawner is
+ * selected in design mode; hidden while the spawner is being dragged or
+ * rotated (parent controls via `hidden`).
  *
- * MVP author flow: click a tile to add that body type at template (0, 0);
- * click an item's × in the list to remove it. Drag-from-palette and
- * full in-canvas editing (drag, select) are a follow-up.
+ * Two interaction surfaces beyond a static view:
+ *
+ *  - **Cross-scope drops from the main palette.** App.tsx queries
+ *    {@link SpawnerPopoverHandle.pointToTemplate} during the palette
+ *    pointerup to test if the pointer is over this popover's canvas; a hit
+ *    routes the new body into the template instead of the scene.
+ *  - **In-popover drag-to-move.** Pointerdown on a template body starts a
+ *    drag; the parent receives `onBeginGesture` / `onMoveBody` / `onCommitGesture`
+ *    so the move lands as one undo entry, the same lifecycle that root-scene
+ *    body drags use.
+ *
+ *  Items are removed via the × in the list below the canvas. Click-to-select
+ *  with editable props inside the popover is a follow-up.
  */
 const POPOVER_W = 220;
 const POPOVER_H = 220;
 const CANVAS_W = 200;
 const CANVAS_H = 130;
-/** Always-visible logical area in the mini-canvas (meters). Items can be
- *  smaller; this is the minimum framing so an empty template doesn't show as
- *  a void. */
+/** Minimum framed area (meters) in the mini canvas — keeps an empty template
+ *  from showing as a void and gives the crosshair some breathing room. */
 const MIN_FRAME = 2.0;
 /** Margin (px) between the popover and the spawner glyph. */
 const ANCHOR_GAP = 14;
 
-export function SpawnerPopover({
-  template,
-  anchor,
-  hidden,
-  onAdd,
-  onRemove,
-}: {
+export interface SpawnerPopoverHandle {
+  /**
+   * If `(clientX, clientY)` lies over the mini-canvas, return the
+   * corresponding template-local coordinate (in spawner-local meters with
+   * the emit point at the origin). Otherwise null. Used by the cross-scope
+   * palette-drop detection in App.tsx.
+   */
+  pointToTemplate(clientX: number, clientY: number): Vec2 | null;
+}
+
+export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   template: BodyTemplate;
   /** Spawner glyph's screen position (computed from main camera). */
   anchor: { x: number; y: number };
+  /** Spawner's world rotation (radians); the popover's aim arrow tracks it. */
+  rotation: number;
   /** True while the spawner is being dragged/rotated; popover hides briefly. */
   hidden?: boolean;
-  onAdd: (type: Body["type"], position: Vec2) => void;
+  /** Called once on pointerdown when an in-popover drag is about to start. */
+  onBeginGesture: () => void;
+  /** Called on every drag move with the new template-local position. */
+  onMoveBody: (bodyId: string, position: Vec2) => void;
+  /** Called once on pointerup so the parent can commit one undo entry. */
+  onCommitGesture: () => void;
   onRemove: (bodyId: string) => void;
-}) {
+}>(function SpawnerPopoverInner(
+  { template, anchor, rotation, hidden, onBeginGesture, onMoveBody, onCommitGesture, onRemove },
+  ref,
+) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const cameraRef = useRef<Camera | null>(null);
-  // The popover's screen position is computed each layout to keep it on-screen.
+  const dragRef = useRef<{ bodyId: string; offset: Vec2 } | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
-  const popoverRef = useRef<HTMLDivElement | null>(null);
 
   // Position the popover next to the anchor with edge-flip.
   useLayoutEffect(() => {
@@ -58,18 +86,14 @@ export function SpawnerPopover({
     const h = POPOVER_H;
     let left = anchor.x + ANCHOR_GAP;
     let top = anchor.y - h / 2;
-    if (left + w > window.innerWidth - margin) {
-      left = anchor.x - ANCHOR_GAP - w;
-    }
+    if (left + w > window.innerWidth - margin) left = anchor.x - ANCHOR_GAP - w;
     if (left < margin) left = margin;
     if (top < margin) top = margin;
-    if (top + h > window.innerHeight - margin) {
-      top = window.innerHeight - margin - h;
-    }
+    if (top + h > window.innerHeight - margin) top = window.innerHeight - margin - h;
     setPos({ left, top });
   }, [anchor.x, anchor.y]);
 
-  // Build the mini-renderer the first time the canvas mounts.
+  // Build the mini-renderer on first mount.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -87,24 +111,81 @@ export function SpawnerPopover({
     const cam = fitTemplate(template.bodies, CANVAS_W, CANVAS_H);
     cameraRef.current = cam;
     r.setCamera(cam);
-    // Draw the template as a "scene": one room, no walls, no grid. We pass the
-    // template's bodies + connectors through a synthesised scene so the existing
-    // renderer can iterate it unchanged.
-    r.draw(
-      synthScene(template),
-      designTransforms(template.bodies),
-      null,
-      undefined,
-    );
+    r.draw(synthScene(template), designTransforms(template.bodies), null, undefined);
   }, [template]);
 
-  if (hidden) return null;
+  // Expose the screen→template conversion to App.tsx so cross-scope palette
+  // drops can ask "is this pointer over me, and where in the template?".
+  useImperativeHandle(
+    ref,
+    (): SpawnerPopoverHandle => ({
+      pointToTemplate: (clientX, clientY) => {
+        const canvas = canvasRef.current;
+        const cam = cameraRef.current;
+        if (!canvas || !cam) return null;
+        const rect = canvas.getBoundingClientRect();
+        if (
+          clientX < rect.left || clientX > rect.right ||
+          clientY < rect.top || clientY > rect.bottom
+        ) {
+          return null;
+        }
+        return screenToWorld(cam, { x: clientX - rect.left, y: clientY - rect.top });
+      },
+    }),
+    [],
+  );
 
+  // Pick the template-local point under a pointer event, in template coords.
+  const eventToTemplate = (e: React.PointerEvent): Vec2 | null => {
+    const canvas = canvasRef.current;
+    const cam = cameraRef.current;
+    if (!canvas || !cam) return null;
+    const rect = canvas.getBoundingClientRect();
+    return screenToWorld(cam, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+  };
+
+  const onCanvasPointerDown = (e: React.PointerEvent) => {
+    if (template.bodies.length === 0) return;
+    const point = eventToTemplate(e);
+    if (!point) return;
+    const id = bodyAtPoint(synthScene(template), 0, point);
+    if (!id) return;
+    const body = template.bodies.find((b) => b.id === id)!;
+    dragRef.current = { bodyId: id, offset: { x: body.position.x - point.x, y: body.position.y - point.y } };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+    onBeginGesture();
+  };
+
+  const onCanvasPointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const point = eventToTemplate(e);
+    if (!point) return;
+    onMoveBody(d.bodyId, { x: point.x + d.offset.x, y: point.y + d.offset.y });
+  };
+
+  const onCanvasPointerUp = (e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    onCommitGesture();
+  };
+
+  // Toggle visibility via CSS rather than unmounting — keeps the canvas DOM
+  // node and the renderer/camera refs alive across the drag-hide cycle, so
+  // the next show doesn't need to rebuild the renderer or re-fit the camera.
   return (
     <div
-      ref={popoverRef}
       className="spawner-popover"
-      style={{ left: pos.left, top: pos.top, width: POPOVER_W }}
+      style={{
+        left: pos.left,
+        top: pos.top,
+        width: POPOVER_W,
+        visibility: hidden ? "hidden" : "visible",
+        pointerEvents: hidden ? "none" : "auto",
+      }}
       onPointerDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
     >
@@ -112,29 +193,27 @@ export function SpawnerPopover({
         <span className="spawner-popover-title">Template</span>
       </div>
       <div className="spawner-popover-canvas-wrap">
-        <canvas ref={canvasRef} className="spawner-popover-canvas" />
-        {/* Crosshair + aim arrow drawn as CSS overlays so they sit on top of
-            the canvas regardless of camera scale. */}
+        <canvas
+          ref={canvasRef}
+          className="spawner-popover-canvas"
+          onPointerDown={onCanvasPointerDown}
+          onPointerMove={onCanvasPointerMove}
+          onPointerUp={onCanvasPointerUp}
+          onPointerCancel={onCanvasPointerUp}
+        />
+        {/* Crosshair at the emit origin + aim arrow that rotates with the
+            spawner's world facing, so the launch direction is unambiguous in
+            the popover regardless of how the glyph is oriented. */}
         <span className="spawner-popover-crosshair" aria-hidden />
-        <span className="spawner-popover-aim" aria-hidden>→</span>
+        <span
+          className="spawner-popover-aim"
+          aria-hidden
+          style={{ transform: `translateY(-50%) rotate(${-rotation}rad)` }}
+        >
+          →
+        </span>
       </div>
-      <div className="spawner-popover-add" role="toolbar" aria-label="Add to template">
-        {bodyTypes()
-          .filter((d) => d.type !== "spawner") // no nested spawners
-          .map((d) => (
-            <button
-              key={d.type}
-              type="button"
-              className="spawner-popover-tile"
-              title={`Add a ${d.label.toLowerCase()} to the template`}
-              onClick={() => onAdd(d.type, { x: 0, y: 0 })}
-            >
-              <BodyPreview type={d.type} size={28} />
-              <span>{d.label}</span>
-            </button>
-          ))}
-      </div>
-      {template.bodies.length > 0 && (
+      {template.bodies.length > 0 ? (
         <ul className="spawner-popover-items">
           {template.bodies.map((b) => (
             <li key={b.id} className="spawner-popover-item">
@@ -150,20 +229,19 @@ export function SpawnerPopover({
             </li>
           ))}
         </ul>
-      )}
-      {template.bodies.length === 0 && (
+      ) : (
         <div className="spawner-popover-empty">
-          Place items here to emit on Play.
+          Drag a shape from the palette onto this canvas to add to the template.
         </div>
       )}
     </div>
   );
-}
+});
 
 /** Center the template in the mini-canvas at a comfortable scale. */
 function fitTemplate(bodies: Body[], w: number, h: number): Camera {
   if (bodies.length === 0) {
-    return fitCamera(MIN_FRAME, MIN_FRAME, w, h, 0.1);
+    return centeredCamera(MIN_FRAME, MIN_FRAME, w, h);
   }
   let minX = Infinity;
   let maxX = -Infinity;
@@ -190,22 +268,26 @@ function fitTemplate(bodies: Body[], w: number, h: number): Camera {
     minY = Math.min(minY, b.position.y - ay);
     maxY = Math.max(maxY, b.position.y + ay);
   }
-  const bw = Math.max(MIN_FRAME, (maxX - minX) + 1.0);
-  const bh = Math.max(MIN_FRAME, (maxY - minY) + 1.0);
-  const cam = fitCamera(bw, bh, w, h, 0.1);
-  // fitCamera assumes the room sits at y ∈ [0, h], centered on x = 0. Our
-  // template is in spawner-local coords with origin at (0, 0). Recenter the
-  // camera so (0, 0) is at the canvas middle instead of the room frame center.
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  return {
-    scale: cam.scale,
-    originX: w / 2 - cx * cam.scale,
-    originY: h / 2 + cy * cam.scale,
-  };
+  // Always include the origin and add a margin so newly-added items aren't
+  // glued to the edge as the frame grows.
+  const halfExtent = Math.max(
+    MIN_FRAME / 2,
+    Math.abs(minX), Math.abs(maxX), Math.abs(minY), Math.abs(maxY),
+  ) + 0.5;
+  return centeredCamera(halfExtent * 2, halfExtent * 2, w, h);
 }
 
-/** A throwaway scene wrapping the template, used to feed the existing Renderer. */
+/** A camera centered on template (0, 0) framing a `fw × fh` meter area. */
+function centeredCamera(fw: number, fh: number, viewW: number, viewH: number): Camera {
+  // Reuse fitCamera's scale math (it'd put the room frame's center off because
+  // it assumes y ∈ [0, fh]), then override originX/originY to put template
+  // (0, 0) at the canvas middle.
+  const cam = fitCamera(fw, fh, viewW, viewH, 0.1);
+  return { scale: cam.scale, originX: viewW / 2, originY: viewH / 2 };
+}
+
+/** A throwaway scene wrapping the template, used to feed the existing Renderer
+ *  and the editor's `bodyAtPoint` picker. */
 function synthScene(template: BodyTemplate) {
   return {
     version: 1,

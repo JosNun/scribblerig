@@ -925,15 +925,24 @@ button > span:not(.doodle-border__anchor),
     linear-gradient(to bottom, transparent 5px, #2b2b2b 5px 7px, transparent 7px);
   opacity: 0.55;
 }
-/* Aim arrow at right edge of canvas — shows the spawner's +x facing.
-   The spawner's actual world rotation isn't reflected here; this is a
-   reminder that emission goes "rightward" in template-local space. */
+/* Aim arrow rooted at the crosshair so it always pivots around the emit
+   origin. The span's `transform-origin` is its left-center; the inline
+   `transform` style from SpawnerPopover rotates by -spawnerRotation (screen
+   y is flipped). The arrow glyph sits inside the span padded left so its
+   tail is at the pivot and its tip points outward. */
 .spawner-popover-aim {
   position: absolute;
   top: 50%;
-  right: 8px;
+  left: 50%;
+  display: inline-block;
+  width: 28px;
+  text-align: right;
+  transform-origin: 0 50%;
+  /* default: arrow points right (rotation=0). The inline style on the
+     element overrides this with `translateY(-50%) rotate(...)`. */
   transform: translateY(-50%);
-  font-size: 13px;
+  font-size: 20px;
+  line-height: 1;
   font-weight: 700;
   color: #5e7a9c;
   pointer-events: none;

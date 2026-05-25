@@ -352,6 +352,35 @@ export function addBodyToTemplate(
 }
 
 /**
+ * Patch a single body inside a spawner's template (position / rotation /
+ * props). No-op if the spawner or the body isn't found. Mirrors
+ * {@link updateBody} for the template scope.
+ */
+export function updateBodyInTemplate(
+  scene: Scene,
+  roomIndex: number,
+  spawnerId: string,
+  bodyId: string,
+  patch: Partial<Omit<Body, "id">>,
+): Scene {
+  const room = scene.rooms[roomIndex];
+  const spawner = room.bodies.find((b) => b.id === spawnerId);
+  if (!spawner || spawner.type !== "spawner" || !spawner.template) return scene;
+  const tmpl = spawner.template;
+  if (!tmpl.bodies.some((b) => b.id === bodyId)) return scene;
+  const nextTemplate: BodyTemplate = {
+    bodies: tmpl.bodies.map((b) => (b.id === bodyId ? { ...b, ...patch } : b)),
+    connectors: tmpl.connectors,
+  };
+  return replaceRoom(scene, roomIndex, {
+    ...room,
+    bodies: room.bodies.map((b) =>
+      b.id === spawnerId ? { ...b, template: nextTemplate } : b,
+    ),
+  });
+}
+
+/**
  * Remove a body from a spawner's template, plus any template connectors
  * referencing it (no dangling joints).
  */
