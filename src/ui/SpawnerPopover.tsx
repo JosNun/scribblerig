@@ -142,7 +142,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     canvas.height = CANVAS_H;
     const cam = popoverCamera(mainScale, CANVAS_W, CANVAS_H);
     cameraRef.current = cam;
-    rendererRef.current = createRenderer(canvas, cam, { grid: false });
+    rendererRef.current = createRenderer(canvas, cam, { grid: false, frame: false });
   }, []);
 
   // Mirror the main canvas's px/m exactly. Origin sits at the canvas center,

@@ -79,9 +79,13 @@ const SELECT_COLOR = "#1f7a3d";
 export function createRenderer(
   canvas: HTMLCanvasElement,
   initialCamera: Camera,
-  options: { grid?: boolean } = {},
+  options: { grid?: boolean; frame?: boolean } = {},
 ): Renderer {
   const showGrid = options.grid !== false; // on by default; off for thumbnails
+  // The room frame + walls are off for "scopeless" renderers (e.g. the
+  // spawner-popover preview, which wraps a template in a synthetic Scene
+  // with no meaningful room size).
+  const showFrame = options.frame !== false;
   const ctx = canvas.getContext("2d")!;
   const rc = rough.canvas(canvas);
   let cam = initialCamera;
@@ -109,8 +113,10 @@ export function createRenderer(
       const room = scene.rooms[0];
 
       if (showGrid) drawGrid();
-      drawRoomFrame(room.settings.size);
-      drawWalls(room.settings.walls, room.settings.size);
+      if (showFrame) {
+        drawRoomFrame(room.settings.size);
+        drawWalls(room.settings.walls, room.settings.size);
+      }
 
       // Connectors under the bodies they join.
       for (const conn of room.connectors) drawConnector(conn, transforms, conn.id === selectedId);
