@@ -317,6 +317,60 @@ export function updateConnector(
 
 // ----- spawner template ops (issue 19) -----
 
+/** A single template item: a connected component of bodies + the connectors
+ *  among them. Returned by {@link templateItems}. */
+export interface TemplateItem {
+  bodies: Body[];
+  connectors: Connector[];
+}
+
+/**
+ * Group a template's bodies into items via connected components of its
+ * connector graph. A body with no connector is its own (singleton) item;
+ * two bodies joined by **any** connector spawn together. Order follows the
+ * template arrays so round-robin emission and the bbox preview cue stay
+ * deterministic.
+ */
+export function templateItems(bodies: Body[], connectors: Connector[]): TemplateItem[] {
+  const parent = new Map<string, string>();
+  for (const b of bodies) parent.set(b.id, b.id);
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    while (parent.get(x) !== r) {
+      const next = parent.get(x)!;
+      parent.set(x, r);
+      x = next;
+    }
+    return r;
+  };
+  for (const c of connectors) {
+    if (!isBodyEndpoint(c.a) || !isBodyEndpoint(c.b)) continue;
+    if (!parent.has(c.a.body) || !parent.has(c.b.body)) continue;
+    const ra = find(c.a.body);
+    const rb = find(c.b.body);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+  const order: string[] = [];
+  const grouped = new Map<string, TemplateItem>();
+  for (const b of bodies) {
+    const root = find(b.id);
+    if (!grouped.has(root)) {
+      grouped.set(root, { bodies: [], connectors: [] });
+      order.push(root);
+    }
+    grouped.get(root)!.bodies.push(b);
+  }
+  for (const c of connectors) {
+    const anchor = isBodyEndpoint(c.a) ? c.a.body : isBodyEndpoint(c.b) ? c.b.body : null;
+    if (!anchor || !parent.has(anchor)) continue;
+    const root = find(anchor);
+    grouped.get(root)?.connectors.push(c);
+  }
+  return order.map((r) => grouped.get(r)!);
+}
+
+
 /**
  * Append a body to a spawner's template, minting a fresh id from the same
  * scene-wide counter so ids stay globally unique. Returns the new scene and

@@ -112,15 +112,6 @@ export function createRenderer(
       drawRoomFrame(room.settings.size);
       drawWalls(room.settings.walls, room.settings.size);
 
-      // Faint outline around each spawner showing the aggregate bbox of its
-      // template's items — a "what comes out of this" cue (issue 19). Drawn
-      // before design bodies so it sits behind them.
-      for (const body of room.bodies) {
-        if (body.type !== "spawner" || !body.template) continue;
-        const t = transforms.get(body.id);
-        if (t) drawTemplateBbox(body.template.bodies, t);
-      }
-
       // Connectors under the bodies they join.
       for (const conn of room.connectors) drawConnector(conn, transforms, conn.id === selectedId);
 
@@ -452,40 +443,6 @@ export function createRenderer(
     ctx.restore();
   }
 
-  /**
-   * Faint outline showing the aggregate bbox of a spawner's template items
-   * (issue 19). Drawn in the spawner's world frame so it rotates with the
-   * spawner. No outline if the template is empty.
-   */
-  function drawTemplateBbox(bodies: Body[], t: BodyTransform): void {
-    const bbox = templateAggregateBbox(bodies);
-    if (!bbox) return;
-    const p = worldToScreen(cam, t.position);
-    const w = bbox.hw * 2 * cam.scale;
-    const h = bbox.hh * 2 * cam.scale;
-    const ox = bbox.cx * cam.scale;
-    const oy = -bbox.cy * cam.scale; // screen y is flipped
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(-t.rotation);
-    const key = `template-bbox:${w.toFixed(1)}x${h.toFixed(1)}@${ox.toFixed(1)},${oy.toFixed(1)}`;
-    const drawable = cached(key, () =>
-      rc.generator.rectangle(ox - w / 2, oy - h / 2, w, h, {
-        stroke: "#5e7a9c",
-        strokeWidth: 1,
-        roughness: 1.8,
-        seed: 19,
-        fill: "#5e7a9c",
-        fillStyle: "hachure",
-        hachureGap: Math.max(4, FILL_GAP_WORLD * cam.scale * 1.5),
-        fillWeight: Math.max(0.5, FILL_WEIGHT_WORLD * cam.scale * 0.7),
-      }),
-    );
-    ctx.globalAlpha = 0.22;
-    rc.draw(drawable);
-    ctx.restore();
-  }
-
   /** Build a cached Rough.js drawable for a shape, centered on the body origin. */
   function roughShape(shape: Shape, options: object): Drawable {
     if (shape.kind === "circle") {
@@ -593,52 +550,3 @@ function hashSeed(id: string): number {
   return Math.abs(h) % 2 ** 31;
 }
 
-/**
- * Axis-aligned bounding box (in template-local coords) of a spawner's template
- * items, including each item's rotation. Returns null for an empty template.
- * The spawner draws this rotated with its own pose.
- *
- * The half-extents are capped at a generous {@link BBOX_HALF_CAP} so a bug
- * elsewhere (an in-flight drag that escapes the popover-canvas gate, a
- * deliberately misshapen import) can never push the hachured cue into a
- * million-pixel rectangle the Rough.js fill pass would freeze on.
- */
-const BBOX_HALF_CAP = 30;
-function templateAggregateBbox(
-  bodies: Body[],
-): { cx: number; cy: number; hw: number; hh: number } | null {
-  if (bodies.length === 0) return null;
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const b of bodies) {
-    let bhw = 0;
-    let bhh = 0;
-    for (const s of def(b.type).shapes(b.props as Props)) {
-      if (s.kind === "circle") {
-        bhw = Math.max(bhw, s.radius);
-        bhh = Math.max(bhh, s.radius);
-      } else {
-        bhw = Math.max(bhw, s.halfWidth);
-        bhh = Math.max(bhh, s.halfHeight);
-      }
-    }
-    const c = Math.abs(Math.cos(b.rotation));
-    const s = Math.abs(Math.sin(b.rotation));
-    const ax = bhw * c + bhh * s;
-    const ay = bhw * s + bhh * c;
-    minX = Math.min(minX, b.position.x - ax);
-    maxX = Math.max(maxX, b.position.x + ax);
-    minY = Math.min(minY, b.position.y - ay);
-    maxY = Math.max(maxY, b.position.y + ay);
-  }
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  return {
-    cx,
-    cy,
-    hw: Math.min(BBOX_HALF_CAP, (maxX - minX) / 2),
-    hh: Math.min(BBOX_HALF_CAP, (maxY - minY) / 2),
-  };
-}

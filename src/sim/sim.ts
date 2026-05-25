@@ -23,7 +23,7 @@ import type {
   Scene,
   Vec2,
 } from "../scene/scene";
-import { cloneItem, isBodyEndpoint } from "../scene/scene";
+import { cloneItem, isBodyEndpoint, templateItems, type TemplateItem } from "../scene/scene";
 import { def, type Props, type Shape } from "../registry/registry";
 
 const FIXED_DT = 1 / 60;
@@ -543,12 +543,6 @@ function fnv1a(bytes: Uint8Array): string {
 
 // ----- spawner runtime (issue 19) -----
 
-/** A pre-computed connected-component slice of a template, in array order. */
-interface ItemTemplate {
-  bodies: Body[];
-  connectors: Connector[];
-}
-
 /** One alive item the renderer needs to see; tracked for despawn-at-cap. */
 interface AliveItem {
   /** Per-spawner emission sequence number (for stable ephemeral ids). */
@@ -565,7 +559,7 @@ interface SpawnerRuntime {
   body: Body;
   placement: Placement;
   bit: number;
-  items: ItemTemplate[];
+  items: TemplateItem[];
   /** Accumulated seconds; fires emission when ≥ interval. */
   timer: number;
   /** Next template item index in round-robin order. */
@@ -573,50 +567,6 @@ interface SpawnerRuntime {
   /** FIFO of currently-alive emissions, oldest first. */
   alive: AliveItem[];
   nextSeq: number;
-}
-
-/**
- * Connected components of a template's bodies under its connector graph. A
- * body with no connector is its own item; two bodies joined by any connector
- * spawn together. Order is template array order so round-robin is stable.
- */
-function templateItems(bodies: Body[], connectors: Connector[]): ItemTemplate[] {
-  const parent = new Map<string, string>();
-  for (const b of bodies) parent.set(b.id, b.id);
-  const find = (x: string): string => {
-    let r = x;
-    while (parent.get(r) !== r) r = parent.get(r)!;
-    while (parent.get(x) !== r) {
-      const next = parent.get(x)!;
-      parent.set(x, r);
-      x = next;
-    }
-    return r;
-  };
-  for (const c of connectors) {
-    if (!isBodyEndpoint(c.a) || !isBodyEndpoint(c.b)) continue;
-    if (!parent.has(c.a.body) || !parent.has(c.b.body)) continue;
-    const ra = find(c.a.body);
-    const rb = find(c.b.body);
-    if (ra !== rb) parent.set(ra, rb);
-  }
-  const order: string[] = [];
-  const grouped = new Map<string, ItemTemplate>();
-  for (const b of bodies) {
-    const root = find(b.id);
-    if (!grouped.has(root)) {
-      grouped.set(root, { bodies: [], connectors: [] });
-      order.push(root);
-    }
-    grouped.get(root)!.bodies.push(b);
-  }
-  for (const c of connectors) {
-    const anchor = isBodyEndpoint(c.a) ? c.a.body : isBodyEndpoint(c.b) ? c.b.body : null;
-    if (!anchor || !parent.has(anchor)) continue;
-    const root = find(anchor);
-    grouped.get(root)?.connectors.push(c);
-  }
-  return order.map((r) => grouped.get(r)!);
 }
 
 /**
@@ -658,7 +608,7 @@ function despawnItem(world: RAPIER.World, item: AliveItem): void {
 function emitItem(
   world: RAPIER.World,
   sp: SpawnerRuntime,
-  item: ItemTemplate,
+  item: TemplateItem,
   seq: number,
 ): AliveItem | null {
   const pose = expandTransform(sp.placement);
@@ -672,11 +622,27 @@ function emitItem(
   // so the original template is never mutated.
   const cloned = cloneItem({ bodies: item.bodies, connectors: item.connectors }, mintId);
 
-  // Transform every cloned body from template-local into the spawner's world
-  // frame. Rotation composes; position rotates and translates by the spawner.
+  // Re-anchor the item on its centroid so every emission emerges at the
+  // spawner's chute regardless of where the user laid the bodies out in the
+  // template canvas (the template position is purely a layout choice). For
+  // a single-body item the body lands exactly on the chute; for a multi-body
+  // item the bodies preserve their relative geometry but the item's centroid
+  // sits at the chute.
+  let centroidX = 0;
+  let centroidY = 0;
   for (const b of cloned.bodies) {
-    const lx = b.position.x;
-    const ly = b.position.y;
+    centroidX += b.position.x;
+    centroidY += b.position.y;
+  }
+  centroidX /= cloned.bodies.length;
+  centroidY /= cloned.bodies.length;
+
+  // Transform every cloned body from item-centered template-local into the
+  // spawner's world frame. Rotation composes; position rotates and translates
+  // by the spawner.
+  for (const b of cloned.bodies) {
+    const lx = b.position.x - centroidX;
+    const ly = b.position.y - centroidY;
     b.position = { x: pose.position.x + lx * cos - ly * sin, y: pose.position.y + lx * sin + ly * cos };
     b.rotation = b.rotation + pose.rotation;
   }
