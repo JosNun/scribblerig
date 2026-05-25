@@ -1866,7 +1866,13 @@ export default function App() {
               const added = addConnectorToTemplate(scene, 0, selectedBody.id, c);
               if (added) scene = added.scene;
             }
-            if (scene !== sceneRef.current) commitScene(scene);
+            if (scene !== sceneRef.current) {
+              commitScene(scene);
+              // Disarm the tool after placing — matches main-canvas behaviour
+              // (onCanvasPointerDown clears connectorTool after placeOverlap
+              // / finishConnector) so the palette tile stops looking active.
+              cancelConnector();
+            }
           }}
         />
       )}
