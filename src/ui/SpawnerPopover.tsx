@@ -501,10 +501,21 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
           onPointerCancel={onCanvasPointerUp}
         />
       </div>
-      {template.bodies.length === 0 && (
+      {template.bodies.length === 0 ? (
         <div className="spawner-popover-empty">
           Drag a shape from the palette onto this canvas to add to the template.
         </div>
+      ) : (
+        // Non-spring connector tools require two overlapping bodies in a
+        // template (single-body clicks would produce a world-anchored
+        // connector, which we refuse to author — see onCanvasPointerDown).
+        // Telegraph that so a click on a lone body doesn't read as a
+        // broken tool.
+        connectorTool && connectorTool !== "spring" && template.bodies.length < 2 && (
+          <div className="spawner-popover-empty">
+            Add another body — {connectorTool} needs two to connect.
+          </div>
+        )
       )}
     </div>
   );

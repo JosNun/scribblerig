@@ -490,7 +490,15 @@ export default function App() {
       const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
       const mod = e.metaKey || e.ctrlKey;
       if (e.key === "Escape") {
-        cancelConnectorRef.current();
+        // Connector tool wins if armed; otherwise Esc is the explicit
+        // deselect gesture (empty-canvas tap no longer clears selection,
+        // so users need a way back to "nothing selected" — e.g. to reach
+        // the Room Settings panel).
+        if (connectorToolRef.current) {
+          cancelConnectorRef.current();
+        } else if (selectedRef.current) {
+          select(null);
+        }
       } else if (typing) {
         return; // editing a property value — leave all other shortcuts inert
       } else if (mod && (e.key === "c" || e.key === "C")) {
@@ -1110,7 +1118,17 @@ export default function App() {
       const templatePoint = spawnerPopoverRef.current?.pointToTemplate(e.clientX, e.clientY);
       if (templatePoint) {
         if (type === "spawner") return; // no nested spawners (silently dropped)
-        const newBody = makeBody(type, templatePoint);
+        // Clamp the drop position to a conservative template-local box. The
+        // popover is small and has no scroll/pan, so a drop at the very edge
+        // can otherwise land partly off-canvas and become hard to find. The
+        // bound is generous enough for typical layouts; users who need a
+        // wider spread can drag the body around after placement.
+        const TEMPLATE_DROP_CLAMP = 1.2;
+        const clamped: Vec2 = {
+          x: Math.max(-TEMPLATE_DROP_CLAMP, Math.min(TEMPLATE_DROP_CLAMP, templatePoint.x)),
+          y: Math.max(-TEMPLATE_DROP_CLAMP, Math.min(TEMPLATE_DROP_CLAMP, templatePoint.y)),
+        };
+        const newBody = makeBody(type, clamped);
         const added = addBodyToTemplate(sceneRef.current, 0, selected.id, newBody);
         if (added) commitScene(added.scene);
         return;
