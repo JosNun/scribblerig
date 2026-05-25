@@ -1704,6 +1704,15 @@ export default function App() {
             bump();
           }}
           onCommitGesture={commitGesture}
+          onCancelGesture={() => {
+            // Drop the in-flight move drafts and revert to the pre-gesture
+            // scene — the subsequent onRemove records one clean undo entry.
+            if (gestureStartRef.current) {
+              sceneRef.current = gestureStartRef.current;
+              gestureStartRef.current = null;
+              bump();
+            }
+          }}
           onRemove={(bodyId) => {
             commitScene(removeBodyFromTemplate(sceneRef.current, 0, selectedBody.id, bodyId));
           }}

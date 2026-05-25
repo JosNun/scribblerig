@@ -597,7 +597,13 @@ function hashSeed(id: string): number {
  * Axis-aligned bounding box (in template-local coords) of a spawner's template
  * items, including each item's rotation. Returns null for an empty template.
  * The spawner draws this rotated with its own pose.
+ *
+ * The half-extents are capped at a generous {@link BBOX_HALF_CAP} so a bug
+ * elsewhere (an in-flight drag that escapes the popover-canvas gate, a
+ * deliberately misshapen import) can never push the hachured cue into a
+ * million-pixel rectangle the Rough.js fill pass would freeze on.
  */
+const BBOX_HALF_CAP = 30;
 function templateAggregateBbox(
   bodies: Body[],
 ): { cx: number; cy: number; hw: number; hh: number } | null {
@@ -627,10 +633,12 @@ function templateAggregateBbox(
     minY = Math.min(minY, b.position.y - ay);
     maxY = Math.max(maxY, b.position.y + ay);
   }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
   return {
-    cx: (minX + maxX) / 2,
-    cy: (minY + maxY) / 2,
-    hw: (maxX - minX) / 2,
-    hh: (maxY - minY) / 2,
+    cx,
+    cy,
+    hw: Math.min(BBOX_HALF_CAP, (maxX - minX) / 2),
+    hh: Math.min(BBOX_HALF_CAP, (maxY - minY) / 2),
   };
 }

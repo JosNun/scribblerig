@@ -68,15 +68,25 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   onMoveBody: (bodyId: string, position: Vec2) => void;
   /** Called once on pointerup so the parent can commit one undo entry. */
   onCommitGesture: () => void;
+  /** Called on pointerup-outside-canvas instead of onCommitGesture — reverts
+   *  the in-flight move drafts so the subsequent remove lands as a single
+   *  undo entry (drag-out-to-remove). */
+  onCancelGesture: () => void;
   onRemove: (bodyId: string) => void;
 }>(function SpawnerPopoverInner(
-  { template, anchor, rotation, hidden, onBeginGesture, onMoveBody, onCommitGesture, onRemove },
+  { template, anchor, rotation, hidden, onBeginGesture, onMoveBody, onCommitGesture, onCancelGesture, onRemove },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const cameraRef = useRef<Camera | null>(null);
-  const dragRef = useRef<{ bodyId: string; offset: Vec2 } | null>(null);
+  // `outOfBounds` tracks whether the pointer is currently outside the popover
+  // canvas during a drag. While out, we hold the body at its last in-bounds
+  // position (extrapolated template coords would shoot the aggregate-bbox cue
+  // to millions of pixels, freezing the Rough.js hachure pass on the main
+  // canvas). Pointerup-while-out triggers a remove (drag-out-to-remove).
+  const dragRef = useRef<{ bodyId: string; offset: Vec2; outOfBounds: boolean } | null>(null);
+  const [outOfBounds, setOutOfBounds] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
 
   // Position the popover next to the anchor with edge-flip.
@@ -136,24 +146,44 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     [],
   );
 
-  // Pick the template-local point under a pointer event, in template coords.
-  const eventToTemplate = (e: React.PointerEvent): Vec2 | null => {
+  // Template-local point under a pointer, OR null if the pointer is outside
+  // the popover canvas (the drag-pause / drag-out-to-remove signal).
+  const eventToTemplateInside = (e: React.PointerEvent): Vec2 | null => {
     const canvas = canvasRef.current;
     const cam = cameraRef.current;
     if (!canvas || !cam) return null;
     const rect = canvas.getBoundingClientRect();
+    if (
+      e.clientX < rect.left || e.clientX > rect.right ||
+      e.clientY < rect.top || e.clientY > rect.bottom
+    ) {
+      return null;
+    }
     return screenToWorld(cam, { x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
 
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (template.bodies.length === 0) return;
-    const point = eventToTemplate(e);
+    const point = eventToTemplateInside(e);
     if (!point) return;
     const id = bodyAtPoint(synthScene(template), 0, point);
     if (!id) return;
     const body = template.bodies.find((b) => b.id === id)!;
-    dragRef.current = { bodyId: id, offset: { x: body.position.x - point.x, y: body.position.y - point.y } };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = {
+      bodyId: id,
+      offset: { x: body.position.x - point.x, y: body.position.y - point.y },
+      outOfBounds: false,
+    };
+    setOutOfBounds(false);
+    // Pointer capture can throw if the pointer id is unknown (the element
+    // was just remounted, or the event was synthesized in a test). Guard so
+    // an exception here doesn't abort the rest of the gesture setup —
+    // onBeginGesture must run for the cancel/commit lifecycle to work.
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* no-op */
+    }
     e.preventDefault();
     onBeginGesture();
   };
@@ -161,16 +191,45 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   const onCanvasPointerMove = (e: React.PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
-    const point = eventToTemplate(e);
-    if (!point) return;
+    const point = eventToTemplateInside(e);
+    if (!point) {
+      // Outside the canvas: hold the body's last in-bounds position and arm
+      // remove-on-release. Updating with extrapolated coords here was what
+      // froze the app — the aggregate-bbox cue on the main canvas would try
+      // to draw a million-pixel hachured rectangle every frame.
+      if (!d.outOfBounds) {
+        d.outOfBounds = true;
+        setOutOfBounds(true);
+      }
+      return;
+    }
+    if (d.outOfBounds) {
+      d.outOfBounds = false;
+      setOutOfBounds(false);
+    }
     onMoveBody(d.bodyId, { x: point.x + d.offset.x, y: point.y + d.offset.y });
   };
 
   const onCanvasPointerUp = (e: React.PointerEvent) => {
-    if (!dragRef.current) return;
+    const d = dragRef.current;
+    if (!d) return;
     dragRef.current = null;
-    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
-    onCommitGesture();
+    setOutOfBounds(false);
+    // Same guarded release as the capture call above — a thrown exception
+    // here would short-circuit the cancel/commit branch below.
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* no-op */
+    }
+    if (d.outOfBounds) {
+      // Discard the move drafts, then remove — the whole gesture lands as a
+      // single "removed body" undo entry rather than "moved a bunch + removed".
+      onCancelGesture();
+      onRemove(d.bodyId);
+    } else {
+      onCommitGesture();
+    }
   };
 
   // Toggle visibility via CSS rather than unmounting — keeps the canvas DOM
@@ -192,7 +251,9 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       <div className="spawner-popover-head">
         <span className="spawner-popover-title">Template</span>
       </div>
-      <div className="spawner-popover-canvas-wrap">
+      <div
+        className={`spawner-popover-canvas-wrap${outOfBounds ? " removing" : ""}`}
+      >
         <canvas
           ref={canvasRef}
           className="spawner-popover-canvas"
