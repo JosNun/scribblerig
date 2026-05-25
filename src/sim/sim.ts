@@ -649,13 +649,14 @@ function emitItem(
   centroidX /= cloned.bodies.length;
   centroidY /= cloned.bodies.length;
 
-  // Transform every cloned body from item-centered template-local into the
-  // spawner's world frame with the chute as the origin. Rotation composes.
+  // Place every body at the chute, translated only — items emerge **upright**
+  // in their authored template orientation regardless of how the spawner is
+  // aimed. The spawner's rotation still drives where the chute *is* (and
+  // which way `speed * facing` points), but not how an item looks. Mental
+  // model: a cannon barrel pivots to aim, but the ball comes out unrotated.
   for (const b of cloned.bodies) {
-    const lx = b.position.x - centroidX;
-    const ly = b.position.y - centroidY;
-    b.position = { x: chuteX + lx * cos - ly * sin, y: chuteY + lx * sin + ly * cos };
-    b.rotation = b.rotation + pose.rotation;
+    b.position = { x: chuteX + (b.position.x - centroidX), y: chuteY + (b.position.y - centroidY) };
+    // Rotation kept as authored — no spawner-rotation composition.
   }
 
   // World-endpoint connectors inside a template are a v1 corner case: their
