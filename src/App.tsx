@@ -267,6 +267,23 @@ export default function App() {
       bump();
     }
   };
+  /** Clear templateSelected if it no longer refers to a body/connector inside
+   *  the currently-selected spawner's template — otherwise undo/redo can
+   *  leave a phantom id pointing at nothing, and a later redo silently
+   *  re-selects it. Reads `templateSelected` from the latest closure
+   *  (doUndo/doRedo are rebuilt every render). */
+  const validateTemplateSelected = () => {
+    if (!templateSelected) return;
+    const sel = selectedRef.current ? bodyById(selectedRef.current) : null;
+    if (!sel || sel.type !== "spawner" || !sel.template) {
+      setTemplateSelected(null);
+      return;
+    }
+    const inTemplate =
+      sel.template.bodies.some((b) => b.id === templateSelected) ||
+      sel.template.connectors.some((c) => c.id === templateSelected);
+    if (!inTemplate) setTemplateSelected(null);
+  };
   const doUndo = () => {
     if (!building) return;
     const prev = historyRef.current.undo();
@@ -275,6 +292,7 @@ export default function App() {
     // Selection may have referenced something the undo removed.
     const sel = selectedRef.current;
     if (sel && !bodyById(sel) && !connById(sel)) select(null);
+    validateTemplateSelected();
     bump();
   };
   const doRedo = () => {
@@ -284,6 +302,7 @@ export default function App() {
     sceneRef.current = next;
     const sel = selectedRef.current;
     if (sel && !bodyById(sel) && !connById(sel)) select(null);
+    validateTemplateSelected();
     bump();
   };
   const undoRef = useRef(doUndo);
@@ -392,6 +411,9 @@ export default function App() {
         cameraRef.current = fitCamera(size.width, size.height, canvas.width, canvas.height, VIEW_MARGIN);
       }
       rendererRef.current?.setCamera(cameraRef.current);
+      // The popover anchor reads cameraRef + getBoundingClientRect at render
+      // time, so a resize that changes either needs to trigger a render.
+      scheduleCameraBump();
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -546,14 +568,28 @@ export default function App() {
   const worldAt = (e: React.PointerEvent) => screenToWorld(cameraRef.current, pointerInCanvas(e));
 
   // ----- camera (pan / zoom) -----
+  /** RAF-coalesced bump for camera-driven view changes — the popover anchor
+   *  + scale need React to render to follow the new camera, but a wheel /
+   *  pinch / pan-drag can fire applyCamera many times per frame. Coalescing
+   *  to one bump per frame keeps the popover in sync without re-rendering
+   *  the whole App tree on every pointer event. */
+  const cameraBumpScheduledRef = useRef(false);
+  const scheduleCameraBump = () => {
+    if (cameraBumpScheduledRef.current) return;
+    cameraBumpScheduledRef.current = true;
+    requestAnimationFrame(() => {
+      cameraBumpScheduledRef.current = false;
+      bump();
+    });
+  };
   /** Adopt a new camera and redraw under it (marks the view as user-adjusted).
-   *  Also bumps React so anything anchored to screen coordinates (the spawner
-   *  popover's position + its mini-camera scale) tracks the new view. */
+   *  Also schedules a bump so anything anchored to screen coordinates (the
+   *  spawner popover's position + its mini-camera scale) tracks the new view. */
   const applyCamera = (next: Camera) => {
     viewAdjustedRef.current = true;
     cameraRef.current = next;
     rendererRef.current?.setCamera(next);
-    bump();
+    scheduleCameraBump();
   };
   /** Zoom about a point, holding the resulting scale within the zoom limits. */
   const zoomClamped = (cam: Camera, at: { x: number; y: number }, factor: number): Camera => {

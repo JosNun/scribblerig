@@ -180,18 +180,24 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     rendererRef.current = createRenderer(canvas, cam, { grid: false, frame: false });
   }, []);
 
-  // Mirror the main canvas's px/m exactly. Origin sits at the canvas center,
-  // so template (0, 0) is the visible chute reference. Tracking the main
-  // scale also means pan/zoom on the main canvas updates the preview, which
-  // matters because App.tsx bumps on every applyCamera so this effect re-runs.
-  // Ghost is also in the deps so the translucent drag preview tracks the
-  // cursor in real time.
+  // Update the popover camera ONLY when mainScale changes. setCamera also
+  // clears the rough.js drawable cache, so calling it on every ghost/spring
+  // tick would regenerate every cached drawable per pointer event — fine on
+  // desktop, jank on mobile.
   useEffect(() => {
     const r = rendererRef.current;
     if (!r) return;
     const cam = popoverCamera(mainScale, CANVAS_W, CANVAS_H);
     cameraRef.current = cam;
     r.setCamera(cam);
+  }, [mainScale]);
+
+  // Redraw on every template / selection / overlay change. No setCamera here
+  // — the cache stays warm across ghost moves and spring drags.
+  useEffect(() => {
+    const r = rendererRef.current;
+    const cam = cameraRef.current;
+    if (!r || !cam) return;
 
     // Build the overlay: optional spring rubber-band + optional ghost preview
     // when the palette ghost is hovering over the popover canvas.
@@ -215,7 +221,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       }
     }
     r.draw(synthScene(template), designTransforms(template.bodies), selectedId, overlay);
-  }, [template, selectedId, mainScale, springDrag, ghost]);
+  }, [template, selectedId, springDrag, ghost, mainScale]);
 
   useImperativeHandle(
     ref,

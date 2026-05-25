@@ -553,6 +553,11 @@ interface AliveItem {
   connectors: Connector[];
   /** Distinct rigid bodies to remove on despawn (deduped across weld compounds). */
   rbs: RAPIER.RigidBody[];
+  /** Per-body placement (rb + local offset within the compound) captured at
+   *  emit time. Cached here so collectEphemerals doesn't re-run weldComponents
+   *  every frame to recover the offsets — they're geometrically static once
+   *  the item is built. */
+  placements: Map<string, Placement>;
 }
 
 interface SpawnerRuntime {
@@ -574,13 +579,20 @@ interface SpawnerRuntime {
  * interval, despawn the oldest alive item (if at cap) **before** the new
  * emission lands — so the world never exceeds `maxAlive` for a frame.
  */
+/** Cap on emissions per step so a long pause (tab unhide, slow frame) plus a
+ *  tiny interval can't dump a huge backlog of items into one frame. After the
+ *  cap we drop the residual timer to its modulo so the next step resumes
+ *  cleanly rather than fighting a backlog. */
+const MAX_EMITS_PER_STEP = 8;
 function stepSpawner(world: RAPIER.World, sp: SpawnerRuntime): void {
   if (sp.items.length === 0) return; // empty template — nothing to emit
   const interval = num(sp.body.props.interval, 1);
   if (!(interval > 0)) return; // guard against 0 / negative
   sp.timer += FIXED_DT;
-  while (sp.timer >= interval) {
+  let emits = 0;
+  while (sp.timer >= interval && emits < MAX_EMITS_PER_STEP) {
     sp.timer -= interval;
+    emits += 1;
     const maxAlive = Math.max(1, Math.floor(num(sp.body.props.maxAlive, 10)));
     while (sp.alive.length >= maxAlive) {
       despawnItem(world, sp.alive.shift()!);
@@ -591,6 +603,9 @@ function stepSpawner(world: RAPIER.World, sp: SpawnerRuntime): void {
     const emitted = emitItem(world, sp, item, seq);
     if (emitted) sp.alive.push(emitted);
   }
+  // Hit the cap — drop the backlog so we don't keep firing on every subsequent
+  // step trying to catch up. The user sees a one-frame burst, then steady-state.
+  if (sp.timer >= interval) sp.timer = sp.timer % interval;
 }
 
 /** Remove every distinct rigid body for an alive item; joints cascade-remove. */
@@ -721,6 +736,7 @@ function emitItem(
     bodies: cloned.bodies,
     connectors: transformedConnectors,
     rbs: rbList,
+    placements,
   };
 }
 
@@ -732,12 +748,12 @@ function collectEphemerals(spawners: SpawnerRuntime[]): EphemeralFrame {
     // Re-read the live placement each tick — these are the freshly-stepped
     // transforms, not the emit-time snapshot.
     for (const item of sp.alive) {
-      // Recompute weld-compound offsets per body so we can expand the rb's
-      // live transform into each member's world pose. For the common case
-      // (one body per item), placements has a single trivial entry.
-      const placements = computeAlivePlacements(item);
+      // Placements were cached on the AliveItem at emit time — the per-body
+      // local offset within the compound rb is geometrically static, only
+      // the rb's *world* transform changes per frame. expandTransform reads
+      // the live rb pose each call.
       for (const b of item.bodies) {
-        const pl = placements.get(b.id);
+        const pl = item.placements.get(b.id);
         if (!pl) continue;
         bodies.push({
           id: b.id,
@@ -752,39 +768,4 @@ function collectEphemerals(spawners: SpawnerRuntime[]): EphemeralFrame {
     }
   }
   return { bodies, connectors };
-}
-
-/**
- * Rebuild placements (rb + offset within compound) for an alive item by
- * re-running the weld-compound logic against the item's design-shape bodies.
- * Cheap: each item is at most a handful of bodies.
- */
-function computeAlivePlacements(item: AliveItem): Map<string, Placement> {
-  const out = new Map<string, Placement>();
-  // For a single-body item the rb is the body's rb directly.
-  if (item.rbs.length === 1 && item.bodies.length === 1) {
-    out.set(item.bodies[0].id, { rb: item.rbs[0], localPos: { x: 0, y: 0 }, localRot: 0 });
-    return out;
-  }
-  // Multi-body: walk weld components in template-array order, mirroring the
-  // build pass. Each component's first body is the reference; subsequent
-  // bodies hold an offset within that compound's rb.
-  const groups = weldComponents(item.bodies, item.connectors);
-  const byId = new Map(item.bodies.map((b) => [b.id, b]));
-  // Componenct order matches the order rbs were created in emitItem (which is
-  // the order buildBodies iterates weldComponents). Use that ordering to pair
-  // each group with its rb. Non-weld connectors don't merge bodies, so each
-  // body without a weld is its own component → its own rb.
-  let rbIdx = 0;
-  for (const group of groups) {
-    const rb = item.rbs[rbIdx++];
-    if (!rb) break;
-    const ref = byId.get(group[0])!;
-    for (const id of group) {
-      const m = byId.get(id)!;
-      const off = memberOffset(ref, m);
-      out.set(id, { rb, localPos: off.localPos, localRot: off.localRot });
-    }
-  }
-  return out;
 }
