@@ -12,7 +12,9 @@ import {
   addBodyToTemplate,
   addConnectorToTemplate,
   removeBodyFromTemplate,
+  removeConnectorFromTemplate,
   updateBodyInTemplate,
+  updateConnectorInTemplate,
   isBodyEndpoint,
   type Scene,
   type Body,
@@ -352,11 +354,17 @@ export default function App() {
   const roomSettings = room.settings;
   const selectedBody = selected ? (room.bodies.find((b) => b.id === selected) ?? null) : null;
   const selectedConnector = selected ? (room.connectors.find((c) => c.id === selected) ?? null) : null;
-  // Body inside the currently-selected spawner's template, when a template
-  // item is selected via the popover canvas. Null otherwise.
+  // Body or connector inside the currently-selected spawner's template, when
+  // a template item is selected via the popover canvas. Null otherwise. The
+  // same templateSelected id refers to either a body or a connector —
+  // bodyAtPoint and connectorAtPoint use the scene-wide id space.
   const templateBody =
     selectedBody?.type === "spawner" && templateSelected
       ? (selectedBody.template?.bodies.find((b) => b.id === templateSelected) ?? null)
+      : null;
+  const templateConnector =
+    selectedBody?.type === "spawner" && templateSelected
+      ? (selectedBody.template?.connectors.find((c) => c.id === templateSelected) ?? null)
       : null;
   const snapOn = () => sceneRef.current.rooms[0].settings.snap;
   // Read undo/redo availability fresh each render. `bump()` after every commit
@@ -899,8 +907,27 @@ export default function App() {
   };
 
   const deleteSelected = () => {
+    if (!building) return;
+    // Template-scope selection takes priority over the spawner's own
+    // selection: pressing Delete with a template body or connector picked
+    // removes *that* item, not the spawner that contains it. The closure
+    // sees the latest templateSelected because deleteSelected is rebuilt
+    // every render and stashed on deleteSelectedRef.
+    if (templateSelected && selectedBody?.type === "spawner") {
+      const sp = selectedBody;
+      if (sp.template?.bodies.some((b) => b.id === templateSelected)) {
+        commitScene(removeBodyFromTemplate(sceneRef.current, 0, sp.id, templateSelected));
+        setTemplateSelected(null);
+        return;
+      }
+      if (sp.template?.connectors.some((c) => c.id === templateSelected)) {
+        commitScene(removeConnectorFromTemplate(sceneRef.current, 0, sp.id, templateSelected));
+        setTemplateSelected(null);
+        return;
+      }
+    }
     const id = selectedRef.current;
-    if (!building || !id) return;
+    if (!id) return;
     const next = bodyById(id)
       ? removeBodyAndConnectors(sceneRef.current, 0, id)
       : removeConnector(sceneRef.current, 0, id);
@@ -1473,6 +1500,16 @@ export default function App() {
     commitScene(next, { mergeKey: `tprop:${templateBody.id}:${keys}` });
   };
 
+  /** Editing a template connector's props inside a spawner. */
+  const onTemplateConnPropChange = (patch: Props) => {
+    if (!selectedBody || selectedBody.type !== "spawner" || !templateConnector) return;
+    const next = updateConnectorInTemplate(sceneRef.current, 0, selectedBody.id, templateConnector.id, {
+      props: { ...templateConnector.props, ...patch },
+    });
+    const keys = Object.keys(patch).join(",");
+    commitScene(next, { mergeKey: `tcprop:${templateConnector.id}:${keys}` });
+  };
+
   const rightPanelEl = liveMotor ? (
     <PropertyPanel
       title={connectorDef(liveMotor.type).label}
@@ -1482,7 +1519,16 @@ export default function App() {
     />
   ) : (
     building && (
-      templateBody ? (
+      templateConnector ? (
+        // A connector inside the open spawner's template — props take
+        // precedence over the spawner's so the user can tune it.
+        <PropertyPanel
+          title={connectorDef(templateConnector.type).label}
+          schema={connectorDef(templateConnector.type).propSchema}
+          props={templateConnector.props}
+          onChange={onTemplateConnPropChange}
+        />
+      ) : templateBody ? (
         // A body inside the open spawner's template — its props panel takes
         // precedence over the spawner's so the user can tweak the item itself.
         <PropertyPanel
@@ -1712,6 +1758,7 @@ export default function App() {
           mainScale={cameraRef.current.scale}
           selectedId={templateSelected}
           connectorTool={connectorTool}
+          ghost={ghost ? { type: ghost.type, x: ghost.x, y: ghost.y } : null}
           hidden={spawnerInteracting}
           onSelect={setTemplateSelected}
           onBeginGesture={() => {

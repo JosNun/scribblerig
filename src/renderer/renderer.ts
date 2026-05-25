@@ -10,7 +10,7 @@
 
 import rough from "roughjs";
 import type { Drawable } from "roughjs/bin/core";
-import type { Body, Connector, ConnectorType, Endpoint, Scene, Vec2 } from "../scene/scene";
+import type { Body, BodyType, Connector, ConnectorType, Endpoint, Scene, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
 import type { BodyTransform, EphemeralFrame } from "../sim/sim";
 import { def, connectorDef, type Props, type Shape } from "../registry/registry";
@@ -23,6 +23,9 @@ export interface DrawOverlay {
   preview?: { a: Vec2; b: Vec2; type: ConnectorType };
   /** World point the endpoint will snap to, highlighted as you drag. */
   snap?: Vec2;
+  /** Translucent body silhouette at the cursor, e.g. for the popover's
+   *  drag-from-palette preview. Drawn at default props for the given type. */
+  ghost?: { type: BodyType; position: Vec2 };
 }
 
 const WALL_THICKNESS = 0.5; // meters; mirrors the floor collider in sim
@@ -217,6 +220,21 @@ export function createRenderer(
 
   function drawDrawOverlay(overlay: DrawOverlay): void {
     ctx.save();
+    if (overlay.ghost) {
+      // Translucent body preview at the cursor. Drawn first so the overlay
+      // lines / snap glow sit above it. Default props give it a neutral
+      // baseline; the cacheId is per-type so the wobble is stable across
+      // pointer moves rather than re-roughening each frame.
+      ctx.save();
+      ctx.globalAlpha = 0.5;
+      drawBody(
+        overlay.ghost.type,
+        `ghost:${overlay.ghost.type}`,
+        def(overlay.ghost.type).defaults,
+        { position: overlay.ghost.position, rotation: 0 },
+      );
+      ctx.restore();
+    }
     if (overlay.preview) {
       const pa = worldToScreen(cam, overlay.preview.a);
       const pb = worldToScreen(cam, overlay.preview.b);

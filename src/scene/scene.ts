@@ -468,6 +468,58 @@ export function updateBodyInTemplate(
 }
 
 /**
+ * Patch a single connector inside a spawner's template (props, endpoints).
+ * No-op if the spawner or the connector isn't found. Mirrors
+ * {@link updateConnector} for the template scope.
+ */
+export function updateConnectorInTemplate(
+  scene: Scene,
+  roomIndex: number,
+  spawnerId: string,
+  connectorId: string,
+  patch: Partial<Omit<Connector, "id">>,
+): Scene {
+  const room = scene.rooms[roomIndex];
+  const spawner = room.bodies.find((b) => b.id === spawnerId);
+  if (!spawner || spawner.type !== "spawner" || !spawner.template) return scene;
+  const tmpl = spawner.template;
+  if (!tmpl.connectors.some((c) => c.id === connectorId)) return scene;
+  const nextTemplate: BodyTemplate = {
+    bodies: tmpl.bodies,
+    connectors: tmpl.connectors.map((c) => (c.id === connectorId ? { ...c, ...patch } : c)),
+  };
+  return replaceRoom(scene, roomIndex, {
+    ...room,
+    bodies: room.bodies.map((b) =>
+      b.id === spawnerId ? { ...b, template: nextTemplate } : b,
+    ),
+  });
+}
+
+/** Remove a connector from a spawner's template. Mirrors {@link removeConnector}. */
+export function removeConnectorFromTemplate(
+  scene: Scene,
+  roomIndex: number,
+  spawnerId: string,
+  connectorId: string,
+): Scene {
+  const room = scene.rooms[roomIndex];
+  const spawner = room.bodies.find((b) => b.id === spawnerId);
+  if (!spawner || spawner.type !== "spawner" || !spawner.template) return scene;
+  const tmpl = spawner.template;
+  const nextTemplate: BodyTemplate = {
+    bodies: tmpl.bodies,
+    connectors: tmpl.connectors.filter((c) => c.id !== connectorId),
+  };
+  return replaceRoom(scene, roomIndex, {
+    ...room,
+    bodies: room.bodies.map((b) =>
+      b.id === spawnerId ? { ...b, template: nextTemplate } : b,
+    ),
+  });
+}
+
+/**
  * Remove a body from a spawner's template, plus any template connectors
  * referencing it (no dangling joints).
  */

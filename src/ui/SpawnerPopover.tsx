@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Body, BodyTemplate, Connector, ConnectorType, Vec2 } from "../scene/scene";
+import type { Body, BodyTemplate, BodyType, Connector, ConnectorType, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
 import { connectorDef, def, type Props } from "../registry/registry";
 import {
@@ -14,6 +14,7 @@ import {
   applyRotation,
   bodyAtPoint,
   buildOverlapConnectors,
+  connectorAtPoint,
   handleAtPoint,
   type HandleId,
 } from "../editor/editor";
@@ -56,6 +57,8 @@ const ANCHOR_GAP = 14;
 const HANDLE_TOL_PX = 14;
 /** Pixel tolerance for snapping a connector endpoint to a body anchor. */
 const ANCHOR_TOL_PX = 20;
+/** Pick tolerance (px) for tapping a connector line in the popover canvas. */
+const CONNECTOR_PICK_TOL_PX = 10;
 
 export interface SpawnerPopoverHandle {
   /**
@@ -87,6 +90,10 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   /** Currently-armed connector tool, or null. When set, the popover canvas
    *  routes pointerdown / drag to connector creation against the template. */
   connectorTool: ConnectorType | null;
+  /** In-flight palette drag preview (type + client position) or null. When
+   *  the pointer is over the popover canvas, this is rendered as a
+   *  translucent silhouette so the user sees where the drop will land. */
+  ghost: { type: BodyType; x: number; y: number } | null;
   /** True while the spawner is being dragged/rotated; popover hides briefly. */
   hidden?: boolean;
   onSelect: (bodyId: string | null) => void;
@@ -112,6 +119,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     mainScale,
     selectedId,
     connectorTool,
+    ghost,
     hidden,
     onSelect,
     onBeginGesture,
@@ -168,20 +176,38 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   // so template (0, 0) is the visible chute reference. Tracking the main
   // scale also means pan/zoom on the main canvas updates the preview, which
   // matters because App.tsx bumps on every applyCamera so this effect re-runs.
+  // Ghost is also in the deps so the translucent drag preview tracks the
+  // cursor in real time.
   useEffect(() => {
     const r = rendererRef.current;
     if (!r) return;
     const cam = popoverCamera(mainScale, CANVAS_W, CANVAS_H);
     cameraRef.current = cam;
     r.setCamera(cam);
-    const overlay: DrawOverlay | undefined = springDrag
+
+    // Build the overlay: optional spring rubber-band + optional ghost preview
+    // when the palette ghost is hovering over the popover canvas.
+    let overlay: DrawOverlay | undefined = springDrag
       ? {
           preview: { a: springDrag.start.world, b: springDrag.end.world, type: "spring" },
           snap: springDrag.end.world,
         }
       : undefined;
+    if (ghost) {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        if (
+          ghost.x >= rect.left && ghost.x <= rect.right &&
+          ghost.y >= rect.top && ghost.y <= rect.bottom
+        ) {
+          const pos = screenToWorld(cam, { x: ghost.x - rect.left, y: ghost.y - rect.top });
+          overlay = { ...(overlay ?? {}), ghost: { type: ghost.type, position: pos } };
+        }
+      }
+    }
     r.draw(synthScene(template), designTransforms(template.bodies), selectedId, overlay);
-  }, [template, selectedId, mainScale, springDrag]);
+  }, [template, selectedId, mainScale, springDrag, ghost]);
 
   useImperativeHandle(
     ref,
@@ -228,10 +254,18 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
 
     // 0. Connector tool armed → route this gesture to connector creation.
     //    Spring is a drag-to-draw; pin/weld/motor place at the click point.
+    //    Templates only ever connect two (or more) bodies — connectors
+    //    anchored to a world point are silently dropped at emit, so we
+    //    refuse to author them here.
     if (connectorTool) {
       const synth = synthScene(template);
       if (connectorTool === "spring") {
         const startSnap = snapEndpoint(synth, 0, point, anchorTol);
+        if (startSnap.kind === "world") {
+          // Spring must originate on a body; empty space is a no-op.
+          e.preventDefault();
+          return;
+        }
         setSpringDrag({ start: startSnap, end: startSnap });
         try {
           (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -241,7 +275,11 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
         e.preventDefault();
         return;
       }
-      const conns = buildOverlapConnectors(connectorTool, point, template.bodies);
+      // Pin / weld / motor: need at least two overlapping bodies. The
+      // first entry that buildOverlapConnectors would return for a single
+      // body would carry a world endpoint, which we forbid in templates.
+      const conns = buildOverlapConnectors(connectorTool, point, template.bodies)
+        .filter((c) => isBodyEndpoint(c.a) && isBodyEndpoint(c.b));
       if (conns.length > 0) onAddTemplateConnectors(conns);
       e.preventDefault();
       return;
@@ -282,7 +320,17 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       return;
     }
 
-    // 3. Empty space → deselect within the template (popover stays open;
+    // 3. No body under the pointer — try connectors. Tapping a spring /
+    //    pin / weld / motor selects it so the user can edit its props or
+    //    delete it. No drag is started (connectors aren't draggable).
+    const connTol = cam ? CONNECTOR_PICK_TOL_PX / cam.scale : 0.2;
+    const connectorId = connectorAtPoint(synthScene(template), 0, point, connTol);
+    if (connectorId) {
+      if (connectorId !== selectedId) onSelect(connectorId);
+      return;
+    }
+
+    // 4. Empty space → deselect within the template (popover stays open;
     //    the spawner itself remains selected in the main scope).
     if (selectedId) onSelect(null);
   };
@@ -349,10 +397,13 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       setSpringDrag(null);
       const epA = endpointOf(start);
       const epB = endpointOf(end);
-      const sameBody = isBodyEndpoint(epA) && isBodyEndpoint(epB) && epA.body === epB.body;
+      // Both endpoints must be body-anchored: templates never carry
+      // world-endpoint connectors (they'd be skipped at emit).
+      if (!isBodyEndpoint(epA) || !isBodyEndpoint(epB)) return;
+      const sameBody = epA.body === epB.body;
       const gap = Math.hypot(start.world.x - end.world.x, start.world.y - end.world.y);
-      // Match the main-canvas finishConnector guards: don't allow a body to
-      // self-spring, and reject zero-length springs in empty space.
+      // Match the main-canvas finishConnector guards: no self-spring, no
+      // zero-length spring.
       if (sameBody || gap < 0.05) return;
       onAddTemplateConnectors([
         {
