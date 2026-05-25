@@ -12,9 +12,9 @@ import { connectorDef, type Props } from "../registry/registry";
 import {
   applyResize,
   applyRotation,
-  bodyAtPoint,
+  bodiesAtPoint,
   buildOverlapConnectors,
-  connectorAtPoint,
+  connectorsAtPoint,
   handleAtPoint,
   type HandleId,
 } from "../editor/editor";
@@ -140,6 +140,14 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   // freeze the renderer). Pointerup-while-out triggers a remove
   // (drag-out-to-remove).
   const dragRef = useRef<DragState | null>(null);
+  // Tap-cycle state: when pointerdown lands on a stack of bodies + connectors
+  // we record the full pick list and which one we just selected. If pointerup
+  // happens without a real drag and the same id was already selected, we
+  // advance to the next layer in the stack — mirrors the canvas behaviour.
+  const selectDownRef = useRef<
+    | { picks: string[]; id: string; wasOnPick: boolean; x: number; y: number }
+    | null
+  >(null);
   // In-flight spring-drag: the captured starting endpoint and the latest
   // endpoint under the pointer. Drives the rubber-band overlay and feeds the
   // final connector on pointerup.
@@ -304,33 +312,39 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       }
     }
 
-    // 2. Pick a body at the point and select it. If a body is picked, also
-    //    arm a move drag so click-and-drag works in one gesture.
-    const id = bodyAtPoint(synthScene(template), 0, point);
-    if (id) {
-      if (id !== selectedId) onSelect(id);
-      const body = template.bodies.find((b) => b.id === id)!;
-      dragRef.current = {
-        kind: "move",
-        bodyId: id,
-        offset: { x: body.position.x - point.x, y: body.position.y - point.y },
-        outOfBounds: false,
-      };
-      beginGesture(e);
-      return;
-    }
-
-    // 3. No body under the pointer — try connectors. Tapping a spring /
-    //    pin / weld / motor selects it so the user can edit its props or
-    //    delete it. No drag is started (connectors aren't draggable).
+    // 2. Build the full pick stack — every body geometry at the point,
+    //    topmost-first, then every connector line within tolerance. A click
+    //    cycles through them on pointerup; if the current selection is
+    //    already in the stack we *keep* it (so the drag handles the
+    //    already-selected body) and the next tap-without-drag advances.
+    const synth = synthScene(template);
     const connTol = cam ? CONNECTOR_PICK_TOL_PX / cam.scale : 0.2;
-    const connectorId = connectorAtPoint(synthScene(template), 0, point, connTol);
-    if (connectorId) {
-      if (connectorId !== selectedId) onSelect(connectorId);
+    const picks = [
+      ...bodiesAtPoint(synth, 0, point),
+      ...connectorsAtPoint(synth, 0, point, connTol),
+    ];
+    if (picks.length > 0) {
+      const wasOnPick = !!selectedId && picks.includes(selectedId);
+      const target = wasOnPick ? selectedId! : picks[0];
+      if (target !== selectedId) onSelect(target);
+      selectDownRef.current = { picks, id: target, wasOnPick, x: e.clientX, y: e.clientY };
+      const body = template.bodies.find((b) => b.id === target);
+      if (body) {
+        // Arm a move drag — connectors don't have a drag gesture but bodies
+        // do, so the same gesture either drags-to-move or, if it ends as a
+        // click, cycles via the pointerup branch.
+        dragRef.current = {
+          kind: "move",
+          bodyId: target,
+          offset: { x: body.position.x - point.x, y: body.position.y - point.y },
+          outOfBounds: false,
+        };
+        beginGesture(e);
+      }
       return;
     }
 
-    // 4. Empty space → deselect within the template (popover stays open;
+    // 3. Empty space → deselect within the template (popover stays open;
     //    the spawner itself remains selected in the main scope).
     if (selectedId) onSelect(null);
   };
@@ -416,22 +430,36 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       return;
     }
     const d = dragRef.current;
-    if (!d) return;
-    dragRef.current = null;
-    setOutOfBounds(false);
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {
-      /* no-op */
+    if (d) {
+      dragRef.current = null;
+      setOutOfBounds(false);
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* no-op */
+      }
+      // Out-of-bounds applies only to moves — handles can't sensibly mean
+      // "remove" (you'd never finish a resize that way). For move drags,
+      // ending outside cancels the drafts and removes the body.
+      if (d.kind === "move" && d.outOfBounds) {
+        onCancelGesture();
+        onRemove(d.bodyId);
+      } else {
+        onCommitGesture();
+      }
     }
-    // Out-of-bounds applies only to moves — handles can't sensibly mean
-    // "remove" (you'd never finish a resize that way). For move drags, ending
-    // outside cancels the drafts and removes the body.
-    if (d.kind === "move" && d.outOfBounds) {
-      onCancelGesture();
-      onRemove(d.bodyId);
-    } else {
-      onCommitGesture();
+    // Cycle-on-click: if a real move didn't happen (release < 4 px from
+    // press) and the press landed on the already-selected item, advance to
+    // the next layer in the stacked pick. Mirrors the canvas behaviour so
+    // overlapping bodies / connectors in a template can be tapped through.
+    const sd = selectDownRef.current;
+    selectDownRef.current = null;
+    if (sd && sd.wasOnPick && sd.picks.length > 1) {
+      const moved = Math.hypot(e.clientX - sd.x, e.clientY - sd.y) > 4;
+      if (!moved) {
+        const i = sd.picks.indexOf(sd.id);
+        onSelect(sd.picks[(i + 1) % sd.picks.length]);
+      }
     }
   };
 
