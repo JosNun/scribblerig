@@ -190,6 +190,13 @@ export default function App() {
   const selectDownRef = useRef<
     { picks: string[]; id: string; wasOnPick: boolean; x: number; y: number } | null
   >(null);
+  // A tap that landed on empty canvas is deferred until pointerup: a real
+  // empty-tap deselects (lets the user reach the Room Settings panel), but a
+  // pinch's first finger ALSO lands on empty space, and we don't want to
+  // close the open spawner popover on the way into a pinch. The second
+  // finger's pointerdown clears this ref; pointerup acts on it only if the
+  // pointer stayed put and never had a second finger join.
+  const emptyTapDownRef = useRef<{ x: number; y: number } | null>(null);
   const placingRef = useRef<BodyType | null>(null);
   const paletteOriginRef = useRef<DOMRect | null>(null);
   const draggedOffRef = useRef(false);
@@ -639,6 +646,9 @@ export default function App() {
     if (pointersRef.current.size >= 2) {
       cancelActiveEdit();
       gestureRef.current = pinchState();
+      // A pending empty-tap is the FIRST finger of a pinch — don't deselect
+      // when the gesture ends.
+      emptyTapDownRef.current = null;
       return;
     }
     // Middle-button drag pans the view (works in build and run modes).
@@ -718,17 +728,23 @@ export default function App() {
     // a body can be dragged, and clicking again without moving cycles to the
     // next layer (see the cycle-on-click in onCanvasPointerUp).
     //
-    // Empty-space taps do *not* clear the current selection — the rule is
-    // "don't deselect except by reselecting" (see armConnector). This also
-    // protects the open spawner popover when the first finger of a pinch
-    // lands on empty space.
+    // Empty-space taps deselect *on pointerup*, not on pointerdown — that
+    // way a pinch's first finger (which also lands on empty space before
+    // the second arrives) doesn't close the open spawner popover. The
+    // second-finger branch above clears emptyTapDownRef so a pinch never
+    // resolves to a deselect.
     const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
     const tol = CONNECTOR_PX / cameraRef.current.scale;
     const picks = [
       ...bodiesAtPoint(sceneRef.current, 0, world),
       ...connectorsAtPoint(sceneRef.current, 0, raw, tol),
     ];
-    if (picks.length === 0) return;
+    if (picks.length === 0) {
+      emptyTapDownRef.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+    // Picked something — any pending empty-tap is no longer ambiguous.
+    emptyTapDownRef.current = null;
     // Keep the current selection if it's under the point (so a drag moves it
     // and a click advances the cycle); otherwise grab the topmost.
     const cur = selectedRef.current;
@@ -868,6 +884,17 @@ export default function App() {
     setSpawnerInteracting(false);
     // Land the gesture as one undo entry (no-op if nothing actually changed).
     commitGesture();
+
+    // Empty-tap deselect: pointerdown that landed on empty space deferred
+    // its deselect until now. If the pointer stayed put (no real drag) and
+    // never had a second finger join (which would have cleared the ref),
+    // commit the deselect.
+    const empty = emptyTapDownRef.current;
+    emptyTapDownRef.current = null;
+    if (empty) {
+      const moved = Math.hypot(e.clientX - empty.x, e.clientY - empty.y) > 4;
+      if (!moved && selectedRef.current) select(null);
+    }
 
     // Cycle-select: a click (no real drag) on something already selected
     // advances to the next stacked object under the point.
