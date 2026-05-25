@@ -146,15 +146,19 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     rendererRef.current = createRenderer(canvas, cam, { grid: false });
   }, []);
 
-  // Re-fit + redraw whenever the template or selection changes. Selection
-  // matters because the renderer's draw call picks up the dashed bbox +
-  // handles from the selectedId arg.
+  // Redraw on every template / selection change so the user sees the latest
+  // pose. The camera, however, only re-fits between gestures — re-fitting on
+  // every drag frame would make the canvas "zoom out" as the user pulls a
+  // body away from the origin, and the dancing frame is more disorienting
+  // than a body that briefly extends past the edge.
   useEffect(() => {
     const r = rendererRef.current;
     if (!r) return;
-    const cam = fitTemplate(template.bodies, CANVAS_W, CANVAS_H);
-    cameraRef.current = cam;
-    r.setCamera(cam);
+    if (!dragRef.current) {
+      const cam = fitTemplate(template.bodies, CANVAS_W, CANVAS_H);
+      cameraRef.current = cam;
+      r.setCamera(cam);
+    }
     r.draw(synthScene(template), designTransforms(template.bodies), selectedId);
   }, [template, selectedId]);
 
