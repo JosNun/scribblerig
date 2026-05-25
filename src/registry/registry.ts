@@ -144,17 +144,28 @@ const PLATFORM: BodyTypeDef = {
   style: { fill: "#9b8466", fillStyle: "cross-hatch" },
 };
 
-// A small fixed-size glyph (~0.5 m) that emits copies of a template subgraph
-// while the sim runs (issue 19). Configured by selecting it: a popover opens
-// next to the glyph with a tiny canvas for authoring the template. Rotating
-// the spawner aims its launch direction; emission inherits its motion at the
+// A small directional glyph that emits copies of a template subgraph while
+// the sim runs (issue 19). Configured by selecting it: a popover opens next
+// to the glyph with a tiny canvas for authoring the template. Rotating the
+// spawner aims its launch direction; emission inherits its motion at the
 // emit point so a spinning fan naturally flings items outward.
+//
+// Shape is a 0.6 × 0.4 rectangle longer along +x — the chute direction —
+// with an arrow mark inside pointing the same way. The asymmetry alone is
+// enough to read rotation, so the popover doesn't need its own aim arrow.
 const SPAWNER: BodyTypeDef = {
   type: "spawner",
   label: "Spawner",
   defaults: { interval: 1.0, maxAlive: 10, speed: 0, static: false },
   isStatic: (p) => p.static === true,
-  shapes: () => [{ kind: "box", halfWidth: 0.25, halfHeight: 0.25 }],
+  shapes: () => [{ kind: "box", halfWidth: 0.3, halfHeight: 0.2 }],
+  // Render-only arrow inside the box pointing along +x (the chute axis).
+  // Three lines: a shaft and two arrowhead diagonals.
+  marks: () => [
+    { kind: "line", a: { x: -0.18, y: 0 }, b: { x: 0.18, y: 0 } },
+    { kind: "line", a: { x: 0.06, y: 0.09 }, b: { x: 0.18, y: 0 } },
+    { kind: "line", a: { x: 0.06, y: -0.09 }, b: { x: 0.18, y: 0 } },
+  ],
   propSchema: [
     { key: "interval", label: "Interval", kind: "number", min: 0.05, max: 30, step: 0.05, help: "Seconds between emissions while the simulation runs. Lower = faster stream." },
     {

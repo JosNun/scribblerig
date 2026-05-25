@@ -74,8 +74,6 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   template: BodyTemplate;
   /** Spawner glyph's screen position (computed from main camera). */
   anchor: { x: number; y: number };
-  /** Spawner's world rotation (radians); the popover's aim arrow tracks it. */
-  rotation: number;
   /** Currently-selected template body id, or null. Drives the selection
    *  chrome + handles drawn by the mini renderer. */
   selectedId: string | null;
@@ -97,7 +95,6 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   {
     template,
     anchor,
-    rotation,
     selectedId,
     hidden,
     onSelect,
@@ -336,17 +333,6 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
           onPointerUp={onCanvasPointerUp}
           onPointerCancel={onCanvasPointerUp}
         />
-        {/* Crosshair at the emit origin + aim arrow that rotates with the
-            spawner's world facing, so the launch direction is unambiguous in
-            the popover regardless of how the glyph is oriented. */}
-        <span className="spawner-popover-crosshair" aria-hidden />
-        <span
-          className="spawner-popover-aim"
-          aria-hidden
-          style={{ transform: `translateY(-50%) rotate(${-rotation}rad)` }}
-        >
-          →
-        </span>
       </div>
       {template.bodies.length > 0 ? (
         <ul className="spawner-popover-items">

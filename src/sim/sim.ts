@@ -605,6 +605,15 @@ function despawnItem(world: RAPIER.World, item: AliveItem): void {
  * for despawn tracking, or null if the item produced no rigid bodies (e.g. an
  * item whose only connectors were world-anchor and skipped).
  */
+/**
+ * Distance from the spawner's center to the chute, in spawner-local meters
+ * along +x. Set slightly past the spawner's +x edge (halfWidth = 0.3) so
+ * emitted items visibly emerge from the chute rather than appearing on top
+ * of the glyph. Spawner ↔ items collision is already disabled by the
+ * per-spawner interaction group, so the offset is purely visual.
+ */
+const CHUTE_OFFSET = 0.4;
+
 function emitItem(
   world: RAPIER.World,
   sp: SpawnerRuntime,
@@ -614,6 +623,9 @@ function emitItem(
   const pose = expandTransform(sp.placement);
   const cos = Math.cos(pose.rotation);
   const sin = Math.sin(pose.rotation);
+  // Chute = pose.position + R(pose.rotation) * (CHUTE_OFFSET, 0)
+  const chuteX = pose.position.x + cos * CHUTE_OFFSET;
+  const chuteY = pose.position.y + sin * CHUTE_OFFSET;
   const ephemSeq = { v: 0 };
   const mintId = (kind: "b" | "c"): string =>
     `ephem:${sp.body.id}:${seq}:${kind}${++ephemSeq.v}`;
@@ -623,11 +635,11 @@ function emitItem(
   const cloned = cloneItem({ bodies: item.bodies, connectors: item.connectors }, mintId);
 
   // Re-anchor the item on its centroid so every emission emerges at the
-  // spawner's chute regardless of where the user laid the bodies out in the
-  // template canvas (the template position is purely a layout choice). For
-  // a single-body item the body lands exactly on the chute; for a multi-body
-  // item the bodies preserve their relative geometry but the item's centroid
-  // sits at the chute.
+  // chute regardless of where the user laid the bodies out in the template
+  // canvas (template position is purely a layout choice). For a single-body
+  // item the body lands at the chute; for a multi-body item the bodies
+  // preserve their relative geometry but the item's centroid sits at the
+  // chute.
   let centroidX = 0;
   let centroidY = 0;
   for (const b of cloned.bodies) {
@@ -638,12 +650,11 @@ function emitItem(
   centroidY /= cloned.bodies.length;
 
   // Transform every cloned body from item-centered template-local into the
-  // spawner's world frame. Rotation composes; position rotates and translates
-  // by the spawner.
+  // spawner's world frame with the chute as the origin. Rotation composes.
   for (const b of cloned.bodies) {
     const lx = b.position.x - centroidX;
     const ly = b.position.y - centroidY;
-    b.position = { x: pose.position.x + lx * cos - ly * sin, y: pose.position.y + lx * sin + ly * cos };
+    b.position = { x: chuteX + lx * cos - ly * sin, y: chuteY + lx * sin + ly * cos };
     b.rotation = b.rotation + pose.rotation;
   }
 

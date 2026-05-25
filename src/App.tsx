@@ -1032,19 +1032,25 @@ export default function App() {
   };
   // A drop is valid if the pointer lands on the main canvas OR on the open
   // spawner-popover canvas (which routes the body into the template — issue
-  // 19 drop-target-decides-scope). Used by the palette ghost and the drop
-  // handler below.
-  const isDroppableAt = (clientX: number, clientY: number): boolean => {
+  // 19 drop-target-decides-scope). Spawners can't be nested, so dragging a
+  // Spawner tile over the popover reports "not droppable" — the ghost goes
+  // red and the release becomes a no-op. Used by the palette ghost and the
+  // drop handler below.
+  const isDroppableAt = (clientX: number, clientY: number, type: BodyType): boolean => {
     if (document.elementFromPoint(clientX, clientY) === canvasRef.current) return true;
-    return spawnerPopoverRef.current?.pointToTemplate(clientX, clientY) != null;
+    const overPopover = spawnerPopoverRef.current?.pointToTemplate(clientX, clientY) != null;
+    if (!overPopover) return false;
+    return type !== "spawner"; // nested spawners are blocked at the UI too
   };
 
   /**
    * Drop one body at the pointer position. If the pointer is over the open
    * spawner popover, add to that spawner's template (in template-local
-   * coords); otherwise add to the scene as today. Selection moves to the
-   * newly-added body only for scene drops — template drops leave the spawner
-   * selected so the popover stays open and the user can keep authoring.
+   * coords); otherwise add to the scene as today. Spawner-in-spawner drops
+   * are blocked here so the UI can't author what the sanitizer would just
+   * strip on round-trip. Selection moves to the newly-added body only for
+   * scene drops — template drops leave the spawner selected so the popover
+   * stays open and the user can keep authoring.
    */
   const dropBodyAtPointer = (type: BodyType, e: React.PointerEvent) => {
     if (!building) return;
@@ -1052,6 +1058,7 @@ export default function App() {
     if (selected?.type === "spawner") {
       const templatePoint = spawnerPopoverRef.current?.pointToTemplate(e.clientX, e.clientY);
       if (templatePoint) {
+        if (type === "spawner") return; // no nested spawners (silently dropped)
         const newBody = makeBody(type, templatePoint);
         const added = addBodyToTemplate(sceneRef.current, 0, selected.id, newBody);
         if (added) commitScene(added.scene);
@@ -1081,7 +1088,7 @@ export default function App() {
       setGhost(null);
       return;
     }
-    setGhost({ type: placingRef.current, x: e.clientX, y: e.clientY, droppable: isDroppableAt(e.clientX, e.clientY) });
+    setGhost({ type: placingRef.current, x: e.clientX, y: e.clientY, droppable: isDroppableAt(e.clientX, e.clientY, placingRef.current!) });
   };
   const onPaletteUp = (e: React.PointerEvent) => {
     const type = placingRef.current;
@@ -1122,7 +1129,7 @@ export default function App() {
       draggedOffRef.current = true;
       capture(e.currentTarget as HTMLElement, e.pointerId);
     }
-    setGhost({ type: placingRef.current!, x: e.clientX, y: e.clientY, droppable: isDroppableAt(e.clientX, e.clientY) });
+    setGhost({ type: placingRef.current!, x: e.clientX, y: e.clientY, droppable: isDroppableAt(e.clientX, e.clientY, placingRef.current!) });
   };
   const onStripUp = (e: React.PointerEvent) => {
     const type = placingRef.current;
@@ -1724,7 +1731,6 @@ export default function App() {
             const rect = canvasRef.current.getBoundingClientRect();
             return { x: screen.x + rect.left, y: screen.y + rect.top };
           })()}
-          rotation={selectedBody.rotation}
           selectedId={templateSelected}
           hidden={spawnerInteracting}
           onSelect={setTemplateSelected}

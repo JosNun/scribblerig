@@ -14,11 +14,15 @@ describe("registry", () => {
     expect(bodyTypes().map((d) => d.type)).toEqual(["ball", "platform", "spawner"]);
   });
 
-  it("declares a small fixed-size box glyph and the four spawner props", () => {
+  it("declares a directional rectangular glyph and the four spawner props", () => {
     const spawner = def("spawner");
+    // Rectangle longer along +x (the chute direction) so the rotation reads
+    // unambiguously even before the arrow marks are factored in.
     expect(spawner.shapes(spawner.defaults)).toEqual([
-      { kind: "box", halfWidth: 0.25, halfHeight: 0.25 },
+      { kind: "box", halfWidth: 0.3, halfHeight: 0.2 },
     ]);
+    // Render-only arrow indicating the chute direction.
+    expect(spawner.marks?.(spawner.defaults)).toHaveLength(3);
     expect(spawner.propSchema.map((f) => f.key)).toEqual([
       "interval",
       "maxAlive",
