@@ -6,7 +6,7 @@
 
 import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
-import { def, type Props, type Shape } from "../registry/registry";
+import { connectorDef, def, type Props, type Shape } from "../registry/registry";
 
 /** Round a world point to the nearest grid multiple. Size 0 disables snapping. */
 export function snapToGrid(point: Vec2, gridSize: number): Vec2 {
@@ -260,6 +260,70 @@ export function endpointWorld(scene: Scene, roomIndex: number, ep: Endpoint): Ve
   if (!isBodyEndpoint(ep)) return ep.world;
   const body = scene.rooms[roomIndex].bodies.find((b) => b.id === ep.body);
   return body ? bodyToWorld(body, ep.local) : null;
+}
+
+/**
+ * Compute the connectors a pin / weld / motor placement should produce at
+ * `point` against `bodies`. Same rules as the canvas place behaviour
+ * (issue 23): a lone body becomes anchored to a fixed world point; a stack
+ * gets all-pairs pins, a chain of welds, or a motor with the deepest body
+ * as stator. Returns an empty array if no body is under the point. Pure —
+ * the caller persists the resulting connectors however it likes (room
+ * scope or template scope).
+ */
+export function buildOverlapConnectors(
+  type: "pin" | "weld" | "motor",
+  point: Vec2,
+  bodies: Body[],
+): Array<Omit<Connector, "id">> {
+  const ids: string[] = [];
+  for (let i = bodies.length - 1; i >= 0; i--) {
+    const body = bodies[i];
+    const local = bodyToLocal(body, point);
+    const shapes = def(body.type).shapes(body.props as Props);
+    if (shapes.some((s) => containsLocal(s, local))) ids.push(body.id);
+  }
+  if (ids.length === 0) return [];
+
+  const ep = (id: string) => ({
+    body: id,
+    local: bodyToLocal(bodies.find((b) => b.id === id)!, point),
+  });
+  const defaults = (t: "pin" | "weld" | "motor"): Props => ({ ...connectorDef(t).defaults });
+
+  if (ids.length === 1) {
+    return [
+      {
+        type,
+        a: ep(ids[0]),
+        b: { world: { x: point.x, y: point.y } },
+        props: defaults(type),
+      },
+    ];
+  }
+
+  const out: Array<Omit<Connector, "id">> = [];
+  if (type === "pin") {
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        out.push({ type: "pin", a: ep(ids[i]), b: ep(ids[j]), props: defaults("pin") });
+      }
+    }
+  } else if (type === "weld") {
+    for (let i = 0; i + 1 < ids.length; i++) {
+      out.push({ type: "weld", a: ep(ids[i]), b: ep(ids[i + 1]), props: defaults("weld") });
+    }
+  } else {
+    // Motor: weld the rotor stack together, drive about the deepest body
+    // (stator) at the shared pivot.
+    const stator = ids[ids.length - 1];
+    const rotor = ids.slice(0, -1);
+    for (let i = 0; i + 1 < rotor.length; i++) {
+      out.push({ type: "weld", a: ep(rotor[i]), b: ep(rotor[i + 1]), props: defaults("weld") });
+    }
+    out.push({ type: "motor", a: ep(rotor[0]), b: ep(stator), props: defaults("motor") });
+  }
+  return out;
 }
 
 /** Id of the topmost connector whose line passes within `tol` of `point`, else null. */

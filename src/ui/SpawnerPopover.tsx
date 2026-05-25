@@ -6,18 +6,22 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Body, BodyTemplate, Vec2 } from "../scene/scene";
-import { def, type Props } from "../registry/registry";
+import type { Body, BodyTemplate, Connector, ConnectorType, Vec2 } from "../scene/scene";
+import { isBodyEndpoint } from "../scene/scene";
+import { connectorDef, def, type Props } from "../registry/registry";
 import {
   applyResize,
   applyRotation,
   bodyAtPoint,
+  buildOverlapConnectors,
   handleAtPoint,
   type HandleId,
 } from "../editor/editor";
 import { screenToWorld, type Camera } from "../renderer/camera";
-import { createRenderer, type Renderer } from "../renderer/renderer";
+import { createRenderer, type DrawOverlay, type Renderer } from "../renderer/renderer";
+import { snap as snapEndpoint, endpointOf, type SnapResult } from "../snapping/snapping";
 import type { BodyTransform } from "../sim/sim";
+import { DoodleBorder } from "./DoodleBorder";
 
 /**
  * Small popover anchored to a selected spawner's glyph, showing a mini editor
@@ -50,6 +54,8 @@ const CANVAS_H = 130;
 const ANCHOR_GAP = 14;
 /** Pixel tolerance for grabbing a handle on the selected template body. */
 const HANDLE_TOL_PX = 14;
+/** Pixel tolerance for snapping a connector endpoint to a body anchor. */
+const ANCHOR_TOL_PX = 20;
 
 export interface SpawnerPopoverHandle {
   /**
@@ -78,6 +84,9 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   /** Currently-selected template body id, or null. Drives the selection
    *  chrome + handles drawn by the mini renderer. */
   selectedId: string | null;
+  /** Currently-armed connector tool, or null. When set, the popover canvas
+   *  routes pointerdown / drag to connector creation against the template. */
+  connectorTool: ConnectorType | null;
   /** True while the spawner is being dragged/rotated; popover hides briefly. */
   hidden?: boolean;
   onSelect: (bodyId: string | null) => void;
@@ -92,12 +101,17 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
    *  entry (drag-out-to-remove). */
   onCancelGesture: () => void;
   onRemove: (bodyId: string) => void;
+  /** Add one or more connectors to the spawner's template (a spring drag
+   *  produces one; a pin/weld/motor click can produce many — all-pairs
+   *  pins, chained welds, or a motor's rotor-stator welds plus the motor). */
+  onAddTemplateConnectors: (connectors: Array<Omit<Connector, "id">>) => void;
 }>(function SpawnerPopoverInner(
   {
     template,
     anchor,
     mainScale,
     selectedId,
+    connectorTool,
     hidden,
     onSelect,
     onBeginGesture,
@@ -105,6 +119,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     onCommitGesture,
     onCancelGesture,
     onRemove,
+    onAddTemplateConnectors,
   },
   ref,
 ) {
@@ -117,6 +132,10 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   // freeze the renderer). Pointerup-while-out triggers a remove
   // (drag-out-to-remove).
   const dragRef = useRef<DragState | null>(null);
+  // In-flight spring-drag: the captured starting endpoint and the latest
+  // endpoint under the pointer. Drives the rubber-band overlay and feeds the
+  // final connector on pointerup.
+  const [springDrag, setSpringDrag] = useState<{ start: SnapResult; end: SnapResult } | null>(null);
   const [outOfBounds, setOutOfBounds] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
 
@@ -155,8 +174,14 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     const cam = popoverCamera(mainScale, CANVAS_W, CANVAS_H);
     cameraRef.current = cam;
     r.setCamera(cam);
-    r.draw(synthScene(template), designTransforms(template.bodies), selectedId);
-  }, [template, selectedId, mainScale]);
+    const overlay: DrawOverlay | undefined = springDrag
+      ? {
+          preview: { a: springDrag.start.world, b: springDrag.end.world, type: "spring" },
+          snap: springDrag.end.world,
+        }
+      : undefined;
+    r.draw(synthScene(template), designTransforms(template.bodies), selectedId, overlay);
+  }, [template, selectedId, mainScale, springDrag]);
 
   useImperativeHandle(
     ref,
@@ -199,6 +224,28 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     if (!point) return;
     const cam = cameraRef.current;
     const tol = cam ? HANDLE_TOL_PX / cam.scale : 0.2;
+    const anchorTol = cam ? ANCHOR_TOL_PX / cam.scale : 0.3;
+
+    // 0. Connector tool armed → route this gesture to connector creation.
+    //    Spring is a drag-to-draw; pin/weld/motor place at the click point.
+    if (connectorTool) {
+      const synth = synthScene(template);
+      if (connectorTool === "spring") {
+        const startSnap = snapEndpoint(synth, 0, point, anchorTol);
+        setSpringDrag({ start: startSnap, end: startSnap });
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        } catch {
+          /* no-op */
+        }
+        e.preventDefault();
+        return;
+      }
+      const conns = buildOverlapConnectors(connectorTool, point, template.bodies);
+      if (conns.length > 0) onAddTemplateConnectors(conns);
+      e.preventDefault();
+      return;
+    }
 
     // 1. If a body is already selected, check for a handle hit first — that
     //    way the rotate / resize handles win over picking through to the body
@@ -252,6 +299,15 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   };
 
   const onCanvasPointerMove = (e: React.PointerEvent) => {
+    if (springDrag) {
+      const point = eventToTemplateInside(e);
+      if (!point) return;
+      const cam = cameraRef.current;
+      const anchorTol = cam ? ANCHOR_TOL_PX / cam.scale : 0.3;
+      const endSnap = snapEndpoint(synthScene(template), 0, point, anchorTol);
+      setSpringDrag({ start: springDrag.start, end: endSnap });
+      return;
+    }
     const d = dragRef.current;
     if (!d) return;
     const point = eventToTemplateInside(e);
@@ -282,6 +338,32 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   };
 
   const onCanvasPointerUp = (e: React.PointerEvent) => {
+    if (springDrag) {
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* no-op */
+      }
+      const start = springDrag.start;
+      const end = springDrag.end;
+      setSpringDrag(null);
+      const epA = endpointOf(start);
+      const epB = endpointOf(end);
+      const sameBody = isBodyEndpoint(epA) && isBodyEndpoint(epB) && epA.body === epB.body;
+      const gap = Math.hypot(start.world.x - end.world.x, start.world.y - end.world.y);
+      // Match the main-canvas finishConnector guards: don't allow a body to
+      // self-spring, and reject zero-length springs in empty space.
+      if (sameBody || gap < 0.05) return;
+      onAddTemplateConnectors([
+        {
+          type: "spring",
+          a: epA,
+          b: epB,
+          props: { ...connectorDef("spring").defaults, restLength: Math.max(0.1, gap) },
+        },
+      ]);
+      return;
+    }
     const d = dragRef.current;
     if (!d) return;
     dragRef.current = null;
@@ -318,6 +400,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       onPointerDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
     >
+      <DoodleBorder strokeWidth={2.5} />
       <div className="spawner-popover-head">
         <span className="spawner-popover-title">Template</span>
       </div>

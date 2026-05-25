@@ -880,12 +880,19 @@ button > span:not(.doodle-border__anchor),
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 10px 10px;
+  padding: 10px 12px 12px;
   background: rgba(255, 253, 247, 0.97);
-  border: 1.5px solid #2b2b2b;
-  border-radius: 12px;
+  /* The doodle border is painted by a sibling <DoodleBorder /> SVG —
+     no CSS border or radius here. Keep a soft drop-shadow for depth. */
   box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(2px);
   font-size: 12px;
+}
+/* Mirror the .panel rule: children sit above the absolutely-positioned
+   doodle-border SVG and its placeholder anchor. */
+.spawner-popover > *:not(.doodle-border):not(.doodle-border__anchor) {
+  position: relative;
+  z-index: 1;
 }
 .spawner-popover-head {
   display: flex;

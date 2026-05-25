@@ -10,6 +10,7 @@ import {
   updateConnector,
   removeBodyAndConnectors,
   addBodyToTemplate,
+  addConnectorToTemplate,
   removeBodyFromTemplate,
   updateBodyInTemplate,
   isBodyEndpoint,
@@ -52,7 +53,7 @@ import {
 import {
   snapToGrid,
   bodiesAtPoint,
-  bodyToLocal,
+  buildOverlapConnectors,
   connectorsAtPoint,
   endpointWorld,
   handleAtPoint,
@@ -831,55 +832,27 @@ export default function App() {
   };
 
   /**
-   * Click-to-place a pin, weld, or motor through the point — acting on **every**
-   * body the point passes through (issue 23), or anchoring a lone body to a
-   * fixed world point. A weld chains the whole stack into one rigid compound; a
-   * pin joins every pair so they share one axle without clashing; a motor treats
-   * the deepest body as the stator, welds the bodies above it into a rotor, and
-   * drives that rotor about the pivot relative to the stator.
+   * Click-to-place a pin, weld, or motor through the point. The combinatorial
+   * logic (lone body, all-pairs pins, chained welds, motor rotor/stator) is in
+   * {@link buildOverlapConnectors} so the spawner popover can run the same
+   * placement against a template's bodies.
    */
   const placeOverlap = (type: "pin" | "weld" | "motor", p: { x: number; y: number }) => {
-    const ids = bodiesAtPoint(sceneRef.current, 0, p); // topmost first … deepest last
-    if (ids.length === 0) return;
-    const ep = (id: string) => ({ body: id, local: bodyToLocal(bodyById(id)!, p) });
-
-    // Lone body: anchor it to a fixed world point (pin pivots, weld locks, motor
-    // drives it about that point).
-    if (ids.length === 1) {
-      const added = addConnector(sceneRef.current, 0, makeConnector(type, ep(ids[0]), { world: { x: p.x, y: p.y } }));
-      sceneRef.current = added.scene;
-      select(added.id);
-      bump();
-      return;
-    }
-
-    // Multiple bodies under the point.
+    const conns = buildOverlapConnectors(type, p, sceneRef.current.rooms[0].bodies);
+    if (conns.length === 0) return;
     let scene = sceneRef.current;
     let selectId = "";
-    const add = (t: ConnectorType, a: ReturnType<typeof ep>, b: ReturnType<typeof ep>) => {
-      const added = addConnector(scene, 0, makeConnector(t, a, b));
+    let motorId = "";
+    for (const c of conns) {
+      const added = addConnector(scene, 0, c);
       scene = added.scene;
       if (!selectId) selectId = added.id;
-      return added.id;
-    };
-    if (type === "pin") {
-      // All-pairs pins at the shared point: one axle, members don't clash.
-      for (let i = 0; i < ids.length; i++)
-        for (let j = i + 1; j < ids.length; j++) add("pin", ep(ids[i]), ep(ids[j]));
-    } else if (type === "weld") {
-      // Chain the stack (n−1 welds) into a single rigid compound.
-      for (let i = 0; i + 1 < ids.length; i++) add("weld", ep(ids[i]), ep(ids[i + 1]));
-    } else {
-      // Motor: the deepest body is the stator; weld the bodies above it into a
-      // rotor (n−2 welds) and drive that rotor about the pivot relative to the
-      // stator. With two bodies this is just a plain motor between them.
-      const stator = ids[ids.length - 1];
-      const rotor = ids.slice(0, -1);
-      for (let i = 0; i + 1 < rotor.length; i++) add("weld", ep(rotor[i]), ep(rotor[i + 1]));
-      selectId = add("motor", ep(rotor[0]), ep(stator)); // select the motor itself
+      if (c.type === "motor") motorId = added.id;
     }
     sceneRef.current = scene;
-    select(selectId);
+    // Motor placement should select the motor itself (not the auxiliary
+    // welds that compound the rotor); fall back to the first added connector.
+    select(motorId || selectId);
     bump();
   };
 
@@ -1021,7 +994,9 @@ export default function App() {
     const next = connectorTool === type ? null : type;
     connectorToolRef.current = next;
     setConnectorTool(next);
-    if (next) select(null);
+    // Selection persists across arming — clearing it here would also close
+    // the open spawner popover, which is exactly when the user wants a
+    // connector tool armed to draw inside the template.
   };
 
   // ----- drag a body type from the palette onto the canvas -----
@@ -1736,6 +1711,7 @@ export default function App() {
           })()}
           mainScale={cameraRef.current.scale}
           selectedId={templateSelected}
+          connectorTool={connectorTool}
           hidden={spawnerInteracting}
           onSelect={setTemplateSelected}
           onBeginGesture={() => {
@@ -1769,6 +1745,17 @@ export default function App() {
             // so the right-panel falls back to the spawner's own props.
             if (templateSelected === bodyId) setTemplateSelected(null);
             commitScene(removeBodyFromTemplate(sceneRef.current, 0, selectedBody.id, bodyId));
+          }}
+          onAddTemplateConnectors={(conns) => {
+            // Apply each connector with addConnectorToTemplate, then commit
+            // the resulting scene as a single undo entry. Mirrors how the
+            // main canvas's placeOverlap stacks multiple addConnector calls.
+            let scene = sceneRef.current;
+            for (const c of conns) {
+              const added = addConnectorToTemplate(scene, 0, selectedBody.id, c);
+              if (added) scene = added.scene;
+            }
+            if (scene !== sceneRef.current) commitScene(scene);
           }}
         />
       )}

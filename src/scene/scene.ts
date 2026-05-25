@@ -406,6 +406,39 @@ export function addBodyToTemplate(
 }
 
 /**
+ * Append a connector to a spawner's template, minting a fresh id from the
+ * scene-wide counter. Mirrors {@link addConnector} for the template scope.
+ * No-op (returns null) if the target body isn't a spawner.
+ */
+export function addConnectorToTemplate(
+  scene: Scene,
+  roomIndex: number,
+  spawnerId: string,
+  connector: Omit<Connector, "id">,
+): { scene: Scene; id: string } | null {
+  const room = scene.rooms[roomIndex];
+  const spawner = room.bodies.find((b) => b.id === spawnerId);
+  if (!spawner || spawner.type !== "spawner") return null;
+  const id = `c${scene.nextId}`;
+  const tmpl = spawner.template ?? { bodies: [], connectors: [] };
+  const nextTemplate: BodyTemplate = {
+    bodies: tmpl.bodies,
+    connectors: [...tmpl.connectors, { ...connector, id }],
+  };
+  const next = replaceRoom(
+    { ...scene, nextId: scene.nextId + 1 },
+    roomIndex,
+    {
+      ...room,
+      bodies: room.bodies.map((b) =>
+        b.id === spawnerId ? { ...b, template: nextTemplate } : b,
+      ),
+    },
+  );
+  return { scene: next, id };
+}
+
+/**
  * Patch a single body inside a spawner's template (position / rotation /
  * props). No-op if the spawner or the body isn't found. Mirrors
  * {@link updateBody} for the template scope.
