@@ -680,8 +680,17 @@ function emitItem(
   if (placements.size === 0) return null;
 
   // Apply the launch + inheritance velocity to each *distinct* rigid body.
-  // For weld-compounded items, several "bodies" share one rb; setting once is
-  // enough (and avoids overwriting with stale offsets).
+  // For weld-compounded items, several "bodies" share one rb; setting once
+  // is enough (and avoids overwriting with stale offsets).
+  //
+  // The ω×r tangential term must be measured from the spawner's *compound
+  // rb origin* — not from the spawner's design world pose. They only differ
+  // when the spawner is welded into a compound where it's not the reference
+  // body (the rb origin is at the *first* welded body); in that case the
+  // rb's linvel/angvel are stored at the compound origin, so r must also be
+  // relative to that origin. Using pose.position skips the radial-arm
+  // contribution and items inherit too little tangential velocity.
+  const rbOrigin = sp.placement.rb.translation();
   const lin = sp.placement.rb.linvel();
   const ang = sp.placement.rb.angvel();
   const speed = num(sp.body.props.speed, 0);
@@ -694,8 +703,8 @@ function emitItem(
     rbList.push(pl.rb);
     if (pl.rb.isFixed()) continue;
     const t = expandTransform(pl);
-    const dx = t.position.x - pose.position.x;
-    const dy = t.position.y - pose.position.y;
+    const dx = t.position.x - rbOrigin.x;
+    const dy = t.position.y - rbOrigin.y;
     pl.rb.setLinvel(
       { x: lin.x - ang * dy + speed * facing.x, y: lin.y + ang * dx + speed * facing.y },
       true,

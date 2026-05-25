@@ -246,10 +246,41 @@ function remapEndpoint(ep: Endpoint, idMap: Map<string, string>): Endpoint | nul
 }
 
 /**
+ * Insert an independent copy of `source` into the scene at `position`, minting
+ * a fresh id and deep-copying its props *and* `template` (for spawners) via
+ * {@link cloneItem}. `source.id` is ignored — cloneItem mints from
+ * `scene.nextId`. Callers like the paste / Cmd+D path that hold a body
+ * snapshot (no longer in the scene) use this directly; callers that have an
+ * id should use {@link duplicateBody}.
+ */
+export function cloneBodyInto(
+  scene: Scene,
+  roomIndex: number,
+  source: Body,
+  position: Vec2,
+): { scene: Scene; id: string } {
+  let nextId = scene.nextId;
+  const mintId = (kind: "b" | "c"): string => {
+    const out = `${kind}${nextId}`;
+    nextId += 1;
+    return out;
+  };
+  const cloned = cloneItem({ bodies: [source], connectors: [] }, mintId).bodies[0];
+  const placed: Body = { ...cloned, position: { ...position } };
+  const room = scene.rooms[roomIndex];
+  const next = replaceRoom(
+    { ...scene, nextId },
+    roomIndex,
+    { ...room, bodies: [...room.bodies, placed] },
+  );
+  return { scene: next, id: placed.id };
+}
+
+/**
  * Clone a body into an independent copy at `position`, minting a fresh id and
  * deep-copying its props (and `template`, for spawners) so editing the copy
  * never touches the original. Returns null if no body matches `id`. Wraps
- * {@link cloneItem} so all duplicate paths share the same id-remap logic.
+ * {@link cloneBodyInto}.
  */
 export function duplicateBody(
   scene: Scene,
@@ -259,21 +290,7 @@ export function duplicateBody(
 ): { scene: Scene; id: string } | null {
   const src = scene.rooms[roomIndex].bodies.find((b) => b.id === id);
   if (!src) return null;
-  let nextId = scene.nextId;
-  const mintId = (kind: "b" | "c"): string => {
-    const out = `${kind}${nextId}`;
-    nextId += 1;
-    return out;
-  };
-  const cloned = cloneItem({ bodies: [src], connectors: [] }, mintId).bodies[0];
-  const placed: Body = { ...cloned, position: { ...position } };
-  const room = scene.rooms[roomIndex];
-  const next = replaceRoom(
-    { ...scene, nextId },
-    roomIndex,
-    { ...room, bodies: [...room.bodies, placed] },
-  );
-  return { scene: next, id: placed.id };
+  return cloneBodyInto(scene, roomIndex, src, position);
 }
 
 /** Append a connector to a room, minting a deterministic unique id. */

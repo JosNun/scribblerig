@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Drawer } from "vaul";
 import {
   addBody,
+  cloneBodyInto,
   updateBody,
   duplicateBody,
   updateRoomSettings,
@@ -943,15 +944,22 @@ export default function App() {
   /** Cascade step (meters) for off-pointer paste/duplicate so copies don't stack. */
   const CASCADE = 0.5;
 
-  /** Add an independent copy of `snapshot` at `position` (clamped), and select it. */
-  const spawnClone = (snapshot: Pick<Body, "type" | "rotation" | "props">, position: Vec2) => {
+  /** Add an independent copy of `snapshot` at `position` (clamped), and select
+   *  it. Routes through cloneBodyInto so a spawner's template is deep-copied
+   *  too (a Pick that drops `template` silently wiped it before — issue
+   *  surfaced in code review). The placeholder id is ignored; cloneItem mints
+   *  fresh ones inside cloneBodyInto. */
+  const spawnClone = (snapshot: Pick<Body, "type" | "rotation" | "props" | "template">, position: Vec2) => {
     const size = sceneRef.current.rooms[0].settings.size;
-    const added = addBody(sceneRef.current, 0, {
+    const src: Body = {
+      id: "src", // ignored by cloneItem; fresh id minted from scene.nextId
       type: snapshot.type,
+      position: { ...position },
       rotation: snapshot.rotation,
       props: { ...snapshot.props },
-      position: clampInsideRoom(size, snapshot, position),
-    });
+      ...(snapshot.template ? { template: snapshot.template } : {}),
+    };
+    const added = cloneBodyInto(sceneRef.current, 0, src, clampInsideRoom(size, snapshot, position));
     commitScene(added.scene);
     select(added.id);
   };

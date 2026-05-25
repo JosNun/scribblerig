@@ -120,9 +120,14 @@ function sanitizeBody(raw: unknown): Body | null {
 }
 
 function sanitizeTemplate(raw: Record<string, unknown>): BodyTemplate {
+  // Drop nested-spawner entries *before* sanitizeBody recurses into them —
+  // otherwise a crafted N-deep nested payload would force N recursive frames
+  // (and per-level prop sanitization) just to be discarded at the post-filter.
+  // Stripping early also makes deep-nesting denial-of-service payloads cheap
+  // to reject.
   const bodies = asArray(raw.bodies)
-    .map(sanitizeBody)
-    .filter((b): b is Body => b !== null && b.type !== "spawner");
+    .map((b) => (isObj(b) && b.type === "spawner" ? null : sanitizeBody(b)))
+    .filter((b): b is Body => b !== null);
   const ids = new Set(bodies.map((b) => b.id));
   const connectors = asArray(raw.connectors)
     .map((c) => sanitizeConnector(c, ids))
