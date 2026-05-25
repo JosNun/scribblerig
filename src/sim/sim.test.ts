@@ -7,6 +7,7 @@ import {
   updateBody,
   updateRoomSettings,
   tracerScene,
+  type Body,
 } from "../scene/scene";
 import { makeBody } from "../registry/registry";
 
@@ -565,6 +566,131 @@ describe("motor connector", () => {
     expect(Math.abs(angVel(world, ball.id))).toBeGreaterThan(3);
     const p = world.readTransforms().get(ball.id)!.position;
     expect(Math.hypot(p.x - 6, p.y - 6)).toBeLessThan(0.3);
+    world.free();
+  });
+});
+
+// Spawners stream copies of a self-contained template into the live world at
+// configured intervals (issue 19). Items are ephemeral — never written back to
+// the scene; readEphemerals() exposes them so the renderer can draw them.
+describe("spawner emission (issue 19)", () => {
+  // A bare room with no walls so emitted items fall freely without bouncing.
+  function spawnerScene(opts: {
+    interval?: number;
+    maxAlive?: number;
+    speed?: number;
+    rotation?: number;
+    template?: { bodies: Body[]; connectors: Connector[] };
+  } = {}) {
+    let s = updateRoomSettings(createScene(), 0, {
+      walls: { floor: false, ceiling: false, left: false, right: false },
+    });
+    const sp = addBody(s, 0, {
+      type: "spawner",
+      position: { x: 0, y: 5 },
+      rotation: opts.rotation ?? 0,
+      props: {
+        interval: opts.interval ?? 1.0,
+        maxAlive: opts.maxAlive ?? 10,
+        speed: opts.speed ?? 0,
+        static: true, // keep spawner pose stable so tests are deterministic
+      },
+      template: opts.template ?? {
+        bodies: [
+          { id: "tb1", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: { radius: 0.2, density: 1, friction: 0.5, restitution: 0.5 } },
+        ],
+        connectors: [],
+      },
+    });
+    return { scene: sp.scene, spawnerId: sp.id };
+  }
+
+  it("emits nothing when the template is empty", () => {
+    const { scene } = spawnerScene({ template: { bodies: [], connectors: [] } });
+    const world = compile(scene);
+    for (let i = 0; i < 120; i++) world.step();
+    expect(world.readEphemerals().bodies).toHaveLength(0);
+    world.free();
+  });
+
+  it("emits one item per interval; nothing emitted before the first tick fires", () => {
+    const { scene } = spawnerScene({ interval: 0.5, maxAlive: 10 });
+    const world = compile(scene);
+    // 6 steps = 0.1s — well before the first interval fires.
+    for (let i = 0; i < 6; i++) world.step();
+    expect(world.readEphemerals().bodies).toHaveLength(0);
+    // 96 steps = 1.6s → three intervals at 0.5s have fired.
+    for (let i = 0; i < 90; i++) world.step();
+    expect(world.readEphemerals().bodies).toHaveLength(3);
+    world.free();
+  });
+
+  it("round-robins through items in template array order", () => {
+    const { scene } = spawnerScene({
+      interval: 0.5,
+      maxAlive: 10,
+      template: {
+        bodies: [
+          { id: "tb1", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: { radius: 0.2 } },
+          { id: "tb2", type: "platform", position: { x: 0, y: 0 }, rotation: 0, props: { width: 0.5, height: 0.1, static: false } },
+        ],
+        connectors: [],
+      },
+    });
+    const world = compile(scene);
+    // Two intervals → first ball, then platform; order preserved in alive FIFO.
+    for (let i = 0; i < 70; i++) world.step();
+    const types = world.readEphemerals().bodies.map((b) => b.type);
+    expect(types).toEqual(["ball", "platform"]);
+    world.free();
+  });
+
+  it("never exceeds maxAlive; despawns oldest before emitting next", () => {
+    const { scene } = spawnerScene({ interval: 0.5, maxAlive: 2 });
+    const world = compile(scene);
+    let everOverCap = false;
+    // 150 steps = 2.5s → 5 emissions; alive count must never exceed 2.
+    for (let i = 0; i < 150; i++) {
+      world.step();
+      if (world.readEphemerals().bodies.length > 2) everOverCap = true;
+    }
+    expect(everOverCap).toBe(false);
+    expect(world.readEphemerals().bodies).toHaveLength(2);
+    world.free();
+  });
+
+  it("speed prop launches items along the spawner's facing", () => {
+    // Rotate the spawner 90° CCW so its +x facing points up (world +y). Items
+    // emitted with speed=5 should be visibly *above* the spawner soon after
+    // emission, before gravity has time to drag them back down.
+    const { scene } = spawnerScene({
+      interval: 0.1,
+      maxAlive: 1,
+      speed: 5,
+      rotation: Math.PI / 2,
+      template: {
+        bodies: [
+          { id: "tb1", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: { radius: 0.1, density: 1 } },
+        ],
+        connectors: [],
+      },
+    });
+    const world = compile(scene);
+    // 12 steps = 0.2s — first emit at frame 6, then 6 more frames of flight.
+    for (let i = 0; i < 12; i++) world.step();
+    const eph = world.readEphemerals().bodies;
+    expect(eph).toHaveLength(1);
+    expect(eph[0].transform.position.y).toBeGreaterThan(5);
+    world.free();
+  });
+
+  it("emitted items carry stable ephemeral ids namespaced by their spawner and sequence", () => {
+    const { scene, spawnerId } = spawnerScene({ interval: 0.1, maxAlive: 5 });
+    const world = compile(scene);
+    for (let i = 0; i < 30; i++) world.step();
+    for (const b of world.readEphemerals().bodies) {
+      expect(b.id.startsWith(`ephem:${spawnerId}:`)).toBe(true);
+    }
     world.free();
   });
 });

@@ -14,17 +14,75 @@
 // is loaded by `initSim()` below into `R`; every value-position use in this
 // file goes through `R.X`, while type-position uses stay `RAPIER.X`.
 import type * as RAPIER from "@dimforge/rapier2d-compat";
-import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
-import { isBodyEndpoint } from "../scene/scene";
+import type {
+  Body,
+  BodyType,
+  Connector,
+  ConnectorType,
+  Endpoint,
+  Scene,
+  Vec2,
+} from "../scene/scene";
+import { cloneItem, isBodyEndpoint } from "../scene/scene";
 import { def, type Props, type Shape } from "../registry/registry";
 
 const FIXED_DT = 1 / 60;
 /** Thickness of the floor/ceiling/wall boundary colliders, in meters. */
 const WALL_THICKNESS = 0.5;
 
+/**
+ * Collision groups for the spawner / emitted-item ignore-self rule (issue 19).
+ *
+ * Rapier interaction groups encode `(memberships << 16) | filter` as a u32.
+ * Two colliders interact iff `(A.memberOf & B.filter) != 0` **and** the
+ * symmetric AND is also nonzero.
+ *
+ * Scheme: each spawner gets a 1-bit membership tag `1 << bit`. Items emitted
+ * by that spawner take that bit as their *only* membership; the spawner takes
+ * full membership but **excludes** that bit from its filter. The asymmetric
+ * filter exclusion is enough — Rapier requires both directions to pass, so
+ * one zero direction kills the pair. Net effect: spawner ignores its own
+ * items, items collide with each other and with everything else.
+ *
+ * 16 membership bits → 16 distinct spawners before wraparound. Beyond that
+ * the bits cycle and overlapping pairs share the rule (a soft degradation
+ * we're happy to accept — 16 spawners is well past any reasonable scene).
+ */
+const SPAWNER_BIT_COUNT = 16;
+const ALL_BITS = 0xffff;
+const DEFAULT_GROUPS = (ALL_BITS << 16) | ALL_BITS;
+function spawnerGroups(bit: number): number {
+  return (ALL_BITS << 16) | (ALL_BITS ^ (1 << bit));
+}
+function emittedItemGroups(bit: number): number {
+  return ((1 << bit) << 16) | ALL_BITS;
+}
+
 export interface BodyTransform {
   position: Vec2;
   rotation: number;
+}
+
+/** A spawner-emitted body's live state for the renderer (no design counterpart). */
+export interface EphemeralBody {
+  id: string;
+  type: BodyType;
+  props: Props;
+  transform: BodyTransform;
+}
+
+/** A joint between two ephemeral bodies, drawn the same way design connectors are. */
+export interface EphemeralConnector {
+  type: ConnectorType;
+  props: Props;
+  a: Endpoint;
+  b: Endpoint;
+}
+
+/** Snapshot of every alive spawner emission this tick. Flat for renderer ease. */
+export interface EphemeralFrame {
+  bodies: EphemeralBody[];
+  connectors: EphemeralConnector[];
 }
 
 export interface SimWorld {
@@ -32,6 +90,8 @@ export interface SimWorld {
   step(): void;
   /** Current transform of every body, keyed by design-graph body id. */
   readTransforms(): Map<string, BodyTransform>;
+  /** Bodies + connectors emitted by spawners, alive this tick (issue 19). */
+  readEphemerals(): EphemeralFrame;
   /**
    * Live-update a motor connector's drive from its props, without recompiling —
    * so motor speed/direction can be tuned mid-run. No-op for unknown ids or
@@ -78,9 +138,29 @@ export function compile(scene: Scene): SimWorld {
 
   buildBoundaries(world, room.settings.walls, room.settings.size);
 
+  // Per-spawner state: a 1-bit collision tag, a timer/round-robin cursor, and
+  // a FIFO of currently-alive emissions. Bit assignment is in design array
+  // order so it's deterministic across compiles (and recompiles after edits).
+  const spawnerBitFor = new Map<string, number>();
+  let bit = 0;
+  for (const b of room.bodies) {
+    if (b.type === "spawner") {
+      spawnerBitFor.set(b.id, bit % SPAWNER_BIT_COUNT);
+      bit += 1;
+    }
+  }
+
   // Welded bodies compile into a *single* compound rigid body (ADR-0009), so a
   // body id maps to its compound's rigid body plus its offset within it.
-  const placements = buildBodies(world, room.bodies, room.connectors);
+  const placements = buildBodies(
+    world,
+    room.bodies,
+    room.connectors,
+    (id) => {
+      const bit = spawnerBitFor.get(id);
+      return bit === undefined ? DEFAULT_GROUPS : spawnerGroups(bit);
+    },
+  );
 
   // Connectors compile to joints, in array order, after all bodies exist.
   // Keep the joints by connector id so motors can be re-tuned live.
@@ -90,13 +170,30 @@ export function compile(scene: Scene): SimWorld {
     if (joint) joints.set(conn.id, joint);
   }
 
+  const spawners: SpawnerRuntime[] = room.bodies
+    .filter((b) => b.type === "spawner")
+    .map((b) => ({
+      body: b,
+      placement: placements.get(b.id)!,
+      bit: spawnerBitFor.get(b.id)!,
+      items: templateItems(b.template?.bodies ?? [], b.template?.connectors ?? []),
+      timer: 0,
+      rrIndex: 0,
+      alive: [],
+      nextSeq: 1,
+    }));
+
   return {
-    step: () => world.step(),
+    step: () => {
+      world.step();
+      for (const sp of spawners) stepSpawner(world, sp);
+    },
     readTransforms: () => {
       const out = new Map<string, BodyTransform>();
       for (const [id, pl] of placements) out.set(id, expandTransform(pl));
       return out;
     },
+    readEphemerals: () => collectEphemerals(spawners),
     setMotor: (connectorId, props) => {
       const joint = joints.get(connectorId);
       if (joint && joint.type() === R!.JointType.Revolute) {
@@ -160,11 +257,16 @@ interface Placement {
  * Build the rigid bodies, merging each weld component into one compound body
  * with a collider per member at the member's offset. Returns each design body's
  * placement. A compound is fixed if **any** member is static (ADR-0009).
+ *
+ * `groupFor` is consulted **per member** so colliders that share a compound
+ * with a spawner (or are themselves a spawner) can still carry their own
+ * collision-group rule. Defaults to {@link DEFAULT_GROUPS} (collide with all).
  */
 function buildBodies(
   world: RAPIER.World,
   bodies: Body[],
   connectors: Connector[],
+  groupFor: (bodyId: string) => number = () => DEFAULT_GROUPS,
 ): Map<string, Placement> {
   const byId = new Map(bodies.map((b) => [b.id, b]));
   const placements = new Map<string, Placement>();
@@ -183,12 +285,14 @@ function buildBodies(
     for (const m of members) {
       const { localPos, localRot } = memberOffset(ref, m);
       const props = m.props as Props;
+      const groups = groupFor(m.id);
       for (const shape of def(m.type).shapes(props)) {
         world.createCollider(
           colliderDesc(shape)
             .setRestitution(num(props.restitution, 0))
             .setFriction(num(props.friction, 0.5))
             .setDensity(num(props.density, 1))
+            .setCollisionGroups(groups)
             .setTranslation(localPos.x, localPos.y)
             .setRotation(localRot),
           rb,
@@ -435,4 +539,265 @@ function fnv1a(bytes: Uint8Array): string {
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+// ----- spawner runtime (issue 19) -----
+
+/** A pre-computed connected-component slice of a template, in array order. */
+interface ItemTemplate {
+  bodies: Body[];
+  connectors: Connector[];
+}
+
+/** One alive item the renderer needs to see; tracked for despawn-at-cap. */
+interface AliveItem {
+  /** Per-spawner emission sequence number (for stable ephemeral ids). */
+  seq: number;
+  /** Cloned design-shape bodies (positions/rotations in world frame at emit). */
+  bodies: Body[];
+  /** Cloned connectors with endpoints remapped to the cloned body ids. */
+  connectors: Connector[];
+  /** Distinct rigid bodies to remove on despawn (deduped across weld compounds). */
+  rbs: RAPIER.RigidBody[];
+}
+
+interface SpawnerRuntime {
+  body: Body;
+  placement: Placement;
+  bit: number;
+  items: ItemTemplate[];
+  /** Accumulated seconds; fires emission when ≥ interval. */
+  timer: number;
+  /** Next template item index in round-robin order. */
+  rrIndex: number;
+  /** FIFO of currently-alive emissions, oldest first. */
+  alive: AliveItem[];
+  nextSeq: number;
+}
+
+/**
+ * Connected components of a template's bodies under its connector graph. A
+ * body with no connector is its own item; two bodies joined by any connector
+ * spawn together. Order is template array order so round-robin is stable.
+ */
+function templateItems(bodies: Body[], connectors: Connector[]): ItemTemplate[] {
+  const parent = new Map<string, string>();
+  for (const b of bodies) parent.set(b.id, b.id);
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    while (parent.get(x) !== r) {
+      const next = parent.get(x)!;
+      parent.set(x, r);
+      x = next;
+    }
+    return r;
+  };
+  for (const c of connectors) {
+    if (!isBodyEndpoint(c.a) || !isBodyEndpoint(c.b)) continue;
+    if (!parent.has(c.a.body) || !parent.has(c.b.body)) continue;
+    const ra = find(c.a.body);
+    const rb = find(c.b.body);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+  const order: string[] = [];
+  const grouped = new Map<string, ItemTemplate>();
+  for (const b of bodies) {
+    const root = find(b.id);
+    if (!grouped.has(root)) {
+      grouped.set(root, { bodies: [], connectors: [] });
+      order.push(root);
+    }
+    grouped.get(root)!.bodies.push(b);
+  }
+  for (const c of connectors) {
+    const anchor = isBodyEndpoint(c.a) ? c.a.body : isBodyEndpoint(c.b) ? c.b.body : null;
+    if (!anchor || !parent.has(anchor)) continue;
+    const root = find(anchor);
+    grouped.get(root)?.connectors.push(c);
+  }
+  return order.map((r) => grouped.get(r)!);
+}
+
+/**
+ * Advance one spawner by a fixed timestep. When the timer crosses its
+ * interval, despawn the oldest alive item (if at cap) **before** the new
+ * emission lands — so the world never exceeds `maxAlive` for a frame.
+ */
+function stepSpawner(world: RAPIER.World, sp: SpawnerRuntime): void {
+  if (sp.items.length === 0) return; // empty template — nothing to emit
+  const interval = num(sp.body.props.interval, 1);
+  if (!(interval > 0)) return; // guard against 0 / negative
+  sp.timer += FIXED_DT;
+  while (sp.timer >= interval) {
+    sp.timer -= interval;
+    const maxAlive = Math.max(1, Math.floor(num(sp.body.props.maxAlive, 10)));
+    while (sp.alive.length >= maxAlive) {
+      despawnItem(world, sp.alive.shift()!);
+    }
+    const item = sp.items[sp.rrIndex % sp.items.length];
+    sp.rrIndex = (sp.rrIndex + 1) % sp.items.length;
+    const seq = sp.nextSeq++;
+    const emitted = emitItem(world, sp, item, seq);
+    if (emitted) sp.alive.push(emitted);
+  }
+}
+
+/** Remove every distinct rigid body for an alive item; joints cascade-remove. */
+function despawnItem(world: RAPIER.World, item: AliveItem): void {
+  for (const rb of item.rbs) world.removeRigidBody(rb);
+}
+
+/**
+ * Instantiate one template item into the live world at the spawner's current
+ * pose. Each ephemeral body gets the spawner's emit-point velocity contribution
+ * (`spawner_lin + ω × offset + speed × facing`). Returns the alive-item record
+ * for despawn tracking, or null if the item produced no rigid bodies (e.g. an
+ * item whose only connectors were world-anchor and skipped).
+ */
+function emitItem(
+  world: RAPIER.World,
+  sp: SpawnerRuntime,
+  item: ItemTemplate,
+  seq: number,
+): AliveItem | null {
+  const pose = expandTransform(sp.placement);
+  const cos = Math.cos(pose.rotation);
+  const sin = Math.sin(pose.rotation);
+  const ephemSeq = { v: 0 };
+  const mintId = (kind: "b" | "c"): string =>
+    `ephem:${sp.body.id}:${seq}:${kind}${++ephemSeq.v}`;
+
+  // Clone the item with fresh ephemeral ids; deep-copies props and positions
+  // so the original template is never mutated.
+  const cloned = cloneItem({ bodies: item.bodies, connectors: item.connectors }, mintId);
+
+  // Transform every cloned body from template-local into the spawner's world
+  // frame. Rotation composes; position rotates and translates by the spawner.
+  for (const b of cloned.bodies) {
+    const lx = b.position.x;
+    const ly = b.position.y;
+    b.position = { x: pose.position.x + lx * cos - ly * sin, y: pose.position.y + lx * sin + ly * cos };
+    b.rotation = b.rotation + pose.rotation;
+  }
+
+  // World-endpoint connectors inside a template are a v1 corner case: their
+  // `world` coords are ambiguous (template-local? world?) and the static anchor
+  // body Rapier creates for them isn't tracked for despawn. Skip them at emit
+  // and rely on user-authored body-to-body joints for templated structure.
+  const transformedConnectors = cloned.connectors.filter(
+    (c) => isBodyEndpoint(c.a) && isBodyEndpoint(c.b),
+  );
+
+  // Build the rigid bodies (with weld compounding) under this spawner's
+  // emission collision group, so they ignore the spawner but collide with
+  // everything else.
+  const itemGroup = emittedItemGroups(sp.bit);
+  const placements = buildBodies(
+    world,
+    cloned.bodies,
+    transformedConnectors,
+    () => itemGroup,
+  );
+  if (placements.size === 0) return null;
+
+  // Apply the launch + inheritance velocity to each *distinct* rigid body.
+  // For weld-compounded items, several "bodies" share one rb; setting once is
+  // enough (and avoids overwriting with stale offsets).
+  const lin = sp.placement.rb.linvel();
+  const ang = sp.placement.rb.angvel();
+  const speed = num(sp.body.props.speed, 0);
+  const facing = { x: cos, y: sin };
+  const seenRbs = new Set<RAPIER.RigidBody>();
+  const rbList: RAPIER.RigidBody[] = [];
+  for (const pl of placements.values()) {
+    if (seenRbs.has(pl.rb)) continue;
+    seenRbs.add(pl.rb);
+    rbList.push(pl.rb);
+    if (pl.rb.isFixed()) continue;
+    const t = expandTransform(pl);
+    const dx = t.position.x - pose.position.x;
+    const dy = t.position.y - pose.position.y;
+    pl.rb.setLinvel(
+      { x: lin.x - ang * dy + speed * facing.x, y: lin.y + ang * dx + speed * facing.y },
+      true,
+    );
+  }
+
+  // Build joints last (matches the design path).
+  for (const c of transformedConnectors) {
+    compileConnector(world, c, placements);
+  }
+
+  return {
+    seq,
+    bodies: cloned.bodies,
+    connectors: transformedConnectors,
+    rbs: rbList,
+  };
+}
+
+/** Flatten every alive item into a single frame for the renderer to draw. */
+function collectEphemerals(spawners: SpawnerRuntime[]): EphemeralFrame {
+  const bodies: EphemeralBody[] = [];
+  const connectors: EphemeralConnector[] = [];
+  for (const sp of spawners) {
+    // Re-read the live placement each tick — these are the freshly-stepped
+    // transforms, not the emit-time snapshot.
+    for (const item of sp.alive) {
+      // Recompute weld-compound offsets per body so we can expand the rb's
+      // live transform into each member's world pose. For the common case
+      // (one body per item), placements has a single trivial entry.
+      const placements = computeAlivePlacements(item);
+      for (const b of item.bodies) {
+        const pl = placements.get(b.id);
+        if (!pl) continue;
+        bodies.push({
+          id: b.id,
+          type: b.type,
+          props: b.props as Props,
+          transform: expandTransform(pl),
+        });
+      }
+      for (const c of item.connectors) {
+        connectors.push({ type: c.type, props: c.props as Props, a: c.a, b: c.b });
+      }
+    }
+  }
+  return { bodies, connectors };
+}
+
+/**
+ * Rebuild placements (rb + offset within compound) for an alive item by
+ * re-running the weld-compound logic against the item's design-shape bodies.
+ * Cheap: each item is at most a handful of bodies.
+ */
+function computeAlivePlacements(item: AliveItem): Map<string, Placement> {
+  const out = new Map<string, Placement>();
+  // For a single-body item the rb is the body's rb directly.
+  if (item.rbs.length === 1 && item.bodies.length === 1) {
+    out.set(item.bodies[0].id, { rb: item.rbs[0], localPos: { x: 0, y: 0 }, localRot: 0 });
+    return out;
+  }
+  // Multi-body: walk weld components in template-array order, mirroring the
+  // build pass. Each component's first body is the reference; subsequent
+  // bodies hold an offset within that compound's rb.
+  const groups = weldComponents(item.bodies, item.connectors);
+  const byId = new Map(item.bodies.map((b) => [b.id, b]));
+  // Componenct order matches the order rbs were created in emitItem (which is
+  // the order buildBodies iterates weldComponents). Use that ordering to pair
+  // each group with its rb. Non-weld connectors don't merge bodies, so each
+  // body without a weld is its own component → its own rb.
+  let rbIdx = 0;
+  for (const group of groups) {
+    const rb = item.rbs[rbIdx++];
+    if (!rb) break;
+    const ref = byId.get(group[0])!;
+    for (const id of group) {
+      const m = byId.get(id)!;
+      const off = memberOffset(ref, m);
+      out.set(id, { rb, localPos: off.localPos, localRot: off.localRot });
+    }
+  }
+  return out;
 }
