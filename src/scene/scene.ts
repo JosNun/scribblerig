@@ -315,6 +315,70 @@ export function updateConnector(
   });
 }
 
+// ----- spawner template ops (issue 19) -----
+
+/**
+ * Append a body to a spawner's template, minting a fresh id from the same
+ * scene-wide counter so ids stay globally unique. Returns the new scene and
+ * the new body's id, mirroring {@link addBody}. No-op (returns null) if the
+ * target body isn't a spawner.
+ */
+export function addBodyToTemplate(
+  scene: Scene,
+  roomIndex: number,
+  spawnerId: string,
+  body: Omit<Body, "id">,
+): { scene: Scene; id: string } | null {
+  const room = scene.rooms[roomIndex];
+  const spawner = room.bodies.find((b) => b.id === spawnerId);
+  if (!spawner || spawner.type !== "spawner") return null;
+  const id = `b${scene.nextId}`;
+  const tmpl = spawner.template ?? { bodies: [], connectors: [] };
+  const nextTemplate: BodyTemplate = {
+    bodies: [...tmpl.bodies, { ...body, id }],
+    connectors: tmpl.connectors,
+  };
+  const next = replaceRoom(
+    { ...scene, nextId: scene.nextId + 1 },
+    roomIndex,
+    {
+      ...room,
+      bodies: room.bodies.map((b) =>
+        b.id === spawnerId ? { ...b, template: nextTemplate } : b,
+      ),
+    },
+  );
+  return { scene: next, id };
+}
+
+/**
+ * Remove a body from a spawner's template, plus any template connectors
+ * referencing it (no dangling joints).
+ */
+export function removeBodyFromTemplate(
+  scene: Scene,
+  roomIndex: number,
+  spawnerId: string,
+  bodyId: string,
+): Scene {
+  const room = scene.rooms[roomIndex];
+  const spawner = room.bodies.find((b) => b.id === spawnerId);
+  if (!spawner || spawner.type !== "spawner" || !spawner.template) return scene;
+  const tmpl = spawner.template;
+  const nextTemplate: BodyTemplate = {
+    bodies: tmpl.bodies.filter((b) => b.id !== bodyId),
+    connectors: tmpl.connectors.filter(
+      (c) => !(isBodyEndpoint(c.a) && c.a.body === bodyId) && !(isBodyEndpoint(c.b) && c.b.body === bodyId),
+    ),
+  };
+  return replaceRoom(scene, roomIndex, {
+    ...room,
+    bodies: room.bodies.map((b) =>
+      b.id === spawnerId ? { ...b, template: nextTemplate } : b,
+    ),
+  });
+}
+
 /** Remove a body and any connectors that referenced it (no dangling joints). */
 export function removeBodyAndConnectors(scene: Scene, roomIndex: number, id: string): Scene {
   const room = scene.rooms[roomIndex];

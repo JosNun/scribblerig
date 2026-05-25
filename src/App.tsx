@@ -9,6 +9,8 @@ import {
   removeConnector,
   updateConnector,
   removeBodyAndConnectors,
+  addBodyToTemplate,
+  removeBodyFromTemplate,
   isBodyEndpoint,
   type Scene,
   type Body,
@@ -35,7 +37,7 @@ import {
 import { type SessionMeta } from "./share/sessions";
 import { createClock, type Clock, type ClockState } from "./clock/clock";
 import { initSim, compile, type SimWorld, type BodyTransform } from "./sim/sim";
-import { type Camera, fitCamera, screenToWorld, zoomAt, panBy } from "./renderer/camera";
+import { type Camera, fitCamera, screenToWorld, worldToScreen, zoomAt, panBy } from "./renderer/camera";
 import { createRenderer, type Renderer, type DrawOverlay } from "./renderer/renderer";
 import {
   bodyTypes,
@@ -69,6 +71,7 @@ import { Icon } from "./ui/Icon";
 import { PropertyPanel } from "./ui/PropertyPanel";
 import { RoomSettingsPanel } from "./ui/RoomSettingsPanel";
 import { SharePopover } from "./ui/SharePopover";
+import { SpawnerPopover } from "./ui/SpawnerPopover";
 
 /** Coarse pointers (touch) get larger hit tolerances so fingers can grab handles. */
 const COARSE = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
@@ -215,6 +218,11 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [connectorTool, setConnectorTool] = useState<ConnectorType | null>(null);
   const [ghost, setGhost] = useState<{ type: BodyType; x: number; y: number; droppable: boolean } | null>(null);
+  // Hide the spawner popover transiently while the user drags/rotates the
+  // spawner glyph — the popover would otherwise lag the glyph by a frame
+  // (React re-renders only on bump / state changes, not on every drag move).
+  // Pointerup clears this; the popover reappears at the spawner's new pose.
+  const [spawnerInteracting, setSpawnerInteracting] = useState(false);
   const [revision, setRevision] = useState(0);
   const bump = () => setRevision((r) => r + 1);
 
@@ -663,6 +671,9 @@ export default function App() {
     }
     if (body) {
       dragOffsetRef.current = { x: body.position.x - world.x, y: body.position.y - world.y };
+      // Hide the spawner popover transiently — it would otherwise lag the
+      // glyph by a frame. Popover reappears on pointerup at the new pose.
+      if (body.type === "spawner") setSpawnerInteracting(true);
     }
     selectDownRef.current = { picks, id: target, wasOnPick, x: e.clientX, y: e.clientY };
     capture(canvasRef.current, e.pointerId);
@@ -768,6 +779,7 @@ export default function App() {
     }
     dragOffsetRef.current = null;
     handleDragRef.current = null;
+    if (spawnerInteracting) setSpawnerInteracting(false);
     // Land the gesture as one undo entry (no-op if nothing actually changed).
     commitGesture();
 
@@ -1628,6 +1640,32 @@ export default function App() {
           scene={sceneRef.current}
           onRenameScene={renameScene}
           onClose={() => setShareOpen(false)}
+        />
+      )}
+
+      {/* Spawner template popover (issue 19). Opens whenever a spawner is
+          selected in design mode; hides transiently while the glyph is being
+          dragged. Read-only canvas + a tiny tile palette for authoring the
+          template. */}
+      {building && selectedBody?.type === "spawner" && canvasRef.current && (
+        <SpawnerPopover
+          template={selectedBody.template ?? { bodies: [], connectors: [] }}
+          anchor={(() => {
+            const screen = worldToScreen(cameraRef.current, selectedBody.position);
+            const rect = canvasRef.current.getBoundingClientRect();
+            return { x: screen.x + rect.left, y: screen.y + rect.top };
+          })()}
+          hidden={spawnerInteracting}
+          onAdd={(type, position) => {
+            const id = selectedBody.id;
+            const newBody = makeBody(type, position);
+            const added = addBodyToTemplate(sceneRef.current, 0, id, newBody);
+            if (added) commitScene(added.scene);
+          }}
+          onRemove={(bodyId) => {
+            const id = selectedBody.id;
+            commitScene(removeBodyFromTemplate(sceneRef.current, 0, id, bodyId));
+          }}
         />
       )}
 

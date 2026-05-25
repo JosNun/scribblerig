@@ -858,3 +858,147 @@ button > span:not(.doodle-border__anchor),
     gap: 6px;
   }
 }
+
+/* Inline warning under a prop field — "still legal but might surprise you" */
+.prop-warn {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: #8a5a0c;
+  background: rgba(255, 200, 50, 0.12);
+  padding: 3px 6px;
+  border-radius: 5px;
+  margin-top: 2px;
+}
+
+/* ---------- Spawner template popover (issue 19) ----------
+   Small floating popover anchored to a selected spawner's glyph. Sized
+   intentionally compact — the size itself nudges users toward small
+   templates. */
+.spawner-popover {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  background: rgba(255, 253, 247, 0.97);
+  border: 1.5px solid #2b2b2b;
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.15);
+  font-size: 12px;
+}
+.spawner-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.spawner-popover-title {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: #2b2b2b;
+}
+.spawner-popover-canvas-wrap {
+  position: relative;
+  width: 100%;
+  border: 1px dashed rgba(43, 43, 43, 0.3);
+  border-radius: 8px;
+  background: #fffaf0;
+  overflow: hidden;
+}
+.spawner-popover-canvas {
+  display: block;
+  width: 100%;
+  height: 130px;
+}
+/* Origin crosshair at the center of the mini canvas (= template (0, 0)). */
+.spawner-popover-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  background:
+    linear-gradient(to right, transparent 5px, #2b2b2b 5px 7px, transparent 7px),
+    linear-gradient(to bottom, transparent 5px, #2b2b2b 5px 7px, transparent 7px);
+  opacity: 0.55;
+}
+/* Aim arrow at right edge of canvas — shows the spawner's +x facing.
+   The spawner's actual world rotation isn't reflected here; this is a
+   reminder that emission goes "rightward" in template-local space. */
+.spawner-popover-aim {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  font-size: 13px;
+  font-weight: 700;
+  color: #5e7a9c;
+  pointer-events: none;
+}
+.spawner-popover-add {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.spawner-popover-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 10px;
+  color: #2b2b2b;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(43, 43, 43, 0.35);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.spawner-popover-tile:hover {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: #2b2b2b;
+}
+.spawner-popover-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 80px;
+  overflow-y: auto;
+}
+.spawner-popover-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 5px;
+  font-size: 11px;
+}
+.spawner-popover-item-label {
+  color: #2b2b2b;
+}
+.spawner-popover-item-del {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 6px;
+  background: transparent;
+  border: none;
+  color: #b3261e;
+  cursor: pointer;
+}
+.spawner-popover-item-del:hover {
+  color: #7a1812;
+}
+.spawner-popover-empty {
+  font-size: 11px;
+  opacity: 0.6;
+  text-align: center;
+  padding: 4px 0 2px;
+}

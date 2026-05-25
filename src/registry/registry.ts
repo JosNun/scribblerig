@@ -52,6 +52,12 @@ export interface PropField {
   step?: number;
   /** One-line explanation shown as a help tooltip in the property panel. */
   help?: string;
+  /**
+   * Optional inline warning derived from the current value (and the full props
+   * for cross-field checks). Returning a non-empty string renders a small
+   * caution line under the control — e.g. "may slow the sim" past a soft cap.
+   */
+  warn?: (value: number | boolean | undefined, allProps: Props) => string | null;
 }
 
 /**
@@ -151,7 +157,16 @@ const SPAWNER: BodyTypeDef = {
   shapes: () => [{ kind: "box", halfWidth: 0.25, halfHeight: 0.25 }],
   propSchema: [
     { key: "interval", label: "Interval", kind: "number", min: 0.05, max: 30, step: 0.05, help: "Seconds between emissions while the simulation runs. Lower = faster stream." },
-    { key: "maxAlive", label: "Max alive", kind: "number", min: 1, max: 500, step: 1, help: "How many of this spawner's items can be alive at once. Past the cap, the oldest is recycled before a new one appears." },
+    {
+      key: "maxAlive",
+      label: "Max alive",
+      kind: "number",
+      min: 1,
+      max: 500,
+      step: 1,
+      help: "How many of this spawner's items can be alive at once. Past the cap, the oldest is recycled before a new one appears.",
+      warn: (v) => (typeof v === "number" && v > 100 ? "Large values may slow the sim." : null),
+    },
     { key: "speed", label: "Speed", kind: "number", min: 0, max: 30, step: 0.5, help: "Launch speed along the spawner's facing, in meters per second. 0 drops items from rest; rotate the spawner to aim." },
     { key: "static", label: "Static (immovable)", kind: "boolean", help: "When on, the spawner is fixed in place and ignores gravity. Off lets it fall or be carried by a motor arm." },
   ],

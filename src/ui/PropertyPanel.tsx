@@ -43,6 +43,7 @@ export function PropertyPanel({
         }
         const f: PropField = item;
         const value = props[f.key];
+        const warning = f.warn ? f.warn(value, props) : null;
         const label = (
           <span className="prop-label">
             {f.label}
@@ -55,6 +56,13 @@ export function PropertyPanel({
             )}
           </span>
         );
+        // A small inline warning under the field for "still legal but might
+        // surprise you" values — e.g. spawner maxAlive past the soft cap.
+        const warnEl = warning ? (
+          <div className="prop-warn" role="note">
+            <span aria-hidden>⚠</span> {warning}
+          </div>
+        ) : null;
 
         if (f.kind === "boolean") {
           return (
@@ -64,6 +72,7 @@ export function PropertyPanel({
                 onChange={(next) => onChange({ [f.key]: next })}
               />
               {label}
+              {warnEl}
             </label>
           );
         }
@@ -79,6 +88,7 @@ export function PropertyPanel({
                 label={f.label}
               />
               <span className="prop-val">{Math.round(deg)}°</span>
+              {warnEl}
             </div>
           );
         }
@@ -114,6 +124,7 @@ export function PropertyPanel({
               onChange={commit}
               label={f.label}
             />
+            {warnEl}
           </div>
         );
       })}
