@@ -12,7 +12,7 @@ import rough from "roughjs";
 import type { Drawable } from "roughjs/bin/core";
 import type { Body, Connector, ConnectorType, Endpoint, Scene, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
-import type { BodyTransform } from "../sim/sim";
+import type { BodyTransform, EphemeralFrame } from "../sim/sim";
 import { def, connectorDef, type Props, type Shape } from "../registry/registry";
 import { bodyHandles, bodyToWorld } from "../editor/editor";
 import { type Camera, worldToScreen, screenToWorld } from "./camera";
@@ -64,6 +64,11 @@ export interface Renderer {
     transforms: Map<string, BodyTransform>,
     selectedId?: string | null,
     overlay?: DrawOverlay,
+    /**
+     * Spawner-emitted bodies + connectors alive this tick (issue 19). Drawn
+     * on top of the design layer; never enter the picking pool.
+     */
+    ephemerals?: EphemeralFrame,
   ): void;
   /** Swap the camera (e.g. on window resize). Invalidates the drawable cache. */
   setCamera(camera: Camera): void;
@@ -99,7 +104,7 @@ export function createRenderer(
       cam = next;
       cache.clear();
     },
-    draw(scene, transforms, selectedId, overlay) {
+    draw(scene, transforms, selectedId, overlay, ephemerals) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const room = scene.rooms[0];
 
@@ -107,16 +112,37 @@ export function createRenderer(
       drawRoomFrame(room.settings.size);
       drawWalls(room.settings.walls, room.settings.size);
 
+      // Faint outline around each spawner showing the aggregate bbox of its
+      // template's items — a "what comes out of this" cue (issue 19). Drawn
+      // before design bodies so it sits behind them.
+      for (const body of room.bodies) {
+        if (body.type !== "spawner" || !body.template) continue;
+        const t = transforms.get(body.id);
+        if (t) drawTemplateBbox(body.template.bodies, t);
+      }
+
       // Connectors under the bodies they join.
       for (const conn of room.connectors) drawConnector(conn, transforms, conn.id === selectedId);
 
       for (const body of room.bodies) {
         const t = transforms.get(body.id);
         if (!t) continue;
-        drawBody(body, t);
+        drawBody(body.type, body.id, body.props as Props, t);
         if (body.id === selectedId) {
           drawSelection(body, t);
           drawHandles(body, t);
+        }
+      }
+
+      // Ephemerals: emitted items live in the sim, not the design scene. Draw
+      // each through the same registry path (so they look identical to design
+      // bodies of the same type) and draw their connectors over them.
+      if (ephemerals && ephemerals.bodies.length > 0) {
+        const ephTransforms = new Map<string, BodyTransform>();
+        for (const eb of ephemerals.bodies) ephTransforms.set(eb.id, eb.transform);
+        for (const ec of ephemerals.connectors) drawConnector(ec, ephTransforms, false);
+        for (const eb of ephemerals.bodies) {
+          drawBody(eb.type, `ephem:${eb.type}`, eb.props, eb.transform);
         }
       }
 
@@ -137,7 +163,10 @@ export function createRenderer(
     };
   }
 
-  function drawConnector(conn: Connector, transforms: Map<string, BodyTransform>, selected: boolean): void {
+  // Connector shape accepted by drawConnector: design Connector or an ephemeral
+  // (issue 19, no id). The body of the function never reads `id`, so both
+  // shapes work uniformly.
+  function drawConnector(conn: Pick<Connector, "type" | "props" | "a" | "b">, transforms: Map<string, BodyTransform>, selected: boolean): void {
     const aw = endpointWorld(conn.a, transforms);
     const bw = endpointWorld(conn.b, transforms);
     if (!aw || !bw) return;
@@ -381,17 +410,19 @@ export function createRenderer(
     ctx.restore();
   }
 
-  function drawBody(body: Body, t: BodyTransform): void {
-    const typeDef = def(body.type);
-    const props = body.props as Props;
-    const seed = hashSeed(body.id);
+  // Body draw is keyed by `cacheId` so design bodies cache per-id (so each one
+  // wobbles uniquely) but ephemerals can share a per-type cache key (issue 19)
+  // and reuse one drawable across every copy of the same template shape.
+  function drawBody(type: Body["type"], cacheId: string, props: Props, t: BodyTransform): void {
+    const typeDef = def(type);
+    const seed = hashSeed(cacheId);
     const p = worldToScreen(cam, t.position);
 
     ctx.save();
     ctx.translate(p.x, p.y);
     ctx.rotate(-t.rotation); // screen y is flipped, so negate rotation
     typeDef.shapes(props).forEach((shape, i) => {
-      const key = `${body.id}:${i}:${shapeSig(shape)}`;
+      const key = `${cacheId}:${i}:${shapeSig(shape)}`;
       const drawable = cached(key, () =>
         roughShape(shape, {
           fill: typeDef.style.fill,
@@ -406,7 +437,7 @@ export function createRenderer(
       rc.draw(drawable);
     });
     (typeDef.marks?.(props) ?? []).forEach((mark, i) => {
-      const key = `${body.id}:mark${i}`;
+      const key = `${cacheId}:mark${i}`;
       const drawable = cached(key, () =>
         rc.generator.line(
           mark.a.x * cam.scale,
@@ -418,6 +449,40 @@ export function createRenderer(
       );
       rc.draw(drawable);
     });
+    ctx.restore();
+  }
+
+  /**
+   * Faint outline showing the aggregate bbox of a spawner's template items
+   * (issue 19). Drawn in the spawner's world frame so it rotates with the
+   * spawner. No outline if the template is empty.
+   */
+  function drawTemplateBbox(bodies: Body[], t: BodyTransform): void {
+    const bbox = templateAggregateBbox(bodies);
+    if (!bbox) return;
+    const p = worldToScreen(cam, t.position);
+    const w = bbox.hw * 2 * cam.scale;
+    const h = bbox.hh * 2 * cam.scale;
+    const ox = bbox.cx * cam.scale;
+    const oy = -bbox.cy * cam.scale; // screen y is flipped
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(-t.rotation);
+    const key = `template-bbox:${w.toFixed(1)}x${h.toFixed(1)}@${ox.toFixed(1)},${oy.toFixed(1)}`;
+    const drawable = cached(key, () =>
+      rc.generator.rectangle(ox - w / 2, oy - h / 2, w, h, {
+        stroke: "#5e7a9c",
+        strokeWidth: 1,
+        roughness: 1.8,
+        seed: 19,
+        fill: "#5e7a9c",
+        fillStyle: "hachure",
+        hachureGap: Math.max(4, FILL_GAP_WORLD * cam.scale * 1.5),
+        fillWeight: Math.max(0.5, FILL_WEIGHT_WORLD * cam.scale * 0.7),
+      }),
+    );
+    ctx.globalAlpha = 0.22;
+    rc.draw(drawable);
     ctx.restore();
   }
 
@@ -526,4 +591,46 @@ function hashSeed(id: string): number {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
   return Math.abs(h) % 2 ** 31;
+}
+
+/**
+ * Axis-aligned bounding box (in template-local coords) of a spawner's template
+ * items, including each item's rotation. Returns null for an empty template.
+ * The spawner draws this rotated with its own pose.
+ */
+function templateAggregateBbox(
+  bodies: Body[],
+): { cx: number; cy: number; hw: number; hh: number } | null {
+  if (bodies.length === 0) return null;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const b of bodies) {
+    let bhw = 0;
+    let bhh = 0;
+    for (const s of def(b.type).shapes(b.props as Props)) {
+      if (s.kind === "circle") {
+        bhw = Math.max(bhw, s.radius);
+        bhh = Math.max(bhh, s.radius);
+      } else {
+        bhw = Math.max(bhw, s.halfWidth);
+        bhh = Math.max(bhh, s.halfHeight);
+      }
+    }
+    const c = Math.abs(Math.cos(b.rotation));
+    const s = Math.abs(Math.sin(b.rotation));
+    const ax = bhw * c + bhh * s;
+    const ay = bhw * s + bhh * c;
+    minX = Math.min(minX, b.position.x - ax);
+    maxX = Math.max(maxX, b.position.x + ax);
+    minY = Math.min(minY, b.position.y - ay);
+    maxY = Math.max(maxY, b.position.y + ay);
+  }
+  return {
+    cx: (minX + maxX) / 2,
+    cy: (minY + maxY) / 2,
+    hw: (maxX - minX) / 2,
+    hh: (maxY - minY) / 2,
+  };
 }

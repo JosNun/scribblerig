@@ -389,11 +389,13 @@ export default function App() {
         const isBuild = clock.state === "build";
         const transforms =
           world && !isBuild ? world.readTransforms() : designTransforms(sceneRef.current);
+        const ephemerals = world && !isBuild ? world.readEphemerals() : undefined;
         rendererRef.current?.draw(
           sceneRef.current,
           transforms,
           isBuild ? selectedRef.current : null,
           isBuild ? (overlayRef.current ?? undefined) : undefined,
+          ephemerals,
         );
         raf = requestAnimationFrame(frame);
       };

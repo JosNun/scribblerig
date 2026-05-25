@@ -8,6 +8,7 @@ import {
   updateRoomSettings,
   tracerScene,
   type Body,
+  type Connector,
 } from "../scene/scene";
 import { makeBody } from "../registry/registry";
 
