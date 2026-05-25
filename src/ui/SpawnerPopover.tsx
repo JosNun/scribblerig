@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { Body, BodyTemplate, BodyType, Connector, ConnectorType, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
-import { connectorDef, def, type Props } from "../registry/registry";
+import { connectorDef, type Props } from "../registry/registry";
 import {
   applyResize,
   applyRotation,
@@ -467,32 +467,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
           onPointerCancel={onCanvasPointerUp}
         />
       </div>
-      {template.bodies.length > 0 ? (
-        <ul className="spawner-popover-items">
-          {template.bodies.map((b) => (
-            <li
-              key={b.id}
-              className={`spawner-popover-item${b.id === selectedId ? " selected" : ""}`}
-            >
-              <button
-                type="button"
-                className="spawner-popover-item-label"
-                onClick={() => onSelect(b.id)}
-              >
-                {def(b.type).label}
-              </button>
-              <button
-                type="button"
-                className="spawner-popover-item-del"
-                aria-label={`Remove ${def(b.type).label}`}
-                onClick={() => onRemove(b.id)}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
+      {template.bodies.length === 0 && (
         <div className="spawner-popover-empty">
           Drag a shape from the palette onto this canvas to add to the template.
         </div>

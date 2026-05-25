@@ -672,16 +672,18 @@ export default function App() {
     // hidden behind the wheel it spins) all become candidates, topmost first;
     // a body can be dragged, and clicking again without moving cycles to the
     // next layer (see the cycle-on-click in onCanvasPointerUp).
+    //
+    // Empty-space taps do *not* clear the current selection — the rule is
+    // "don't deselect except by reselecting" (see armConnector). This also
+    // protects the open spawner popover when the first finger of a pinch
+    // lands on empty space.
     const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
     const tol = CONNECTOR_PX / cameraRef.current.scale;
     const picks = [
       ...bodiesAtPoint(sceneRef.current, 0, world),
       ...connectorsAtPoint(sceneRef.current, 0, raw, tol),
     ];
-    if (picks.length === 0) {
-      select(null);
-      return;
-    }
+    if (picks.length === 0) return;
     // Keep the current selection if it's under the point (so a drag moves it
     // and a click advances the cycle); otherwise grab the topmost.
     const cur = selectedRef.current;
