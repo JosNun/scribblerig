@@ -8,31 +8,39 @@ import {
 } from "react";
 import type { Body, BodyTemplate, Vec2 } from "../scene/scene";
 import { def, type Props } from "../registry/registry";
-import { bodyAtPoint } from "../editor/editor";
+import {
+  applyResize,
+  applyRotation,
+  bodyAtPoint,
+  handleAtPoint,
+  type HandleId,
+} from "../editor/editor";
 import { fitCamera, screenToWorld, type Camera } from "../renderer/camera";
 import { createRenderer, type Renderer } from "../renderer/renderer";
 import type { BodyTransform } from "../sim/sim";
 
 /**
- * Small popover anchored to a selected spawner's glyph, showing a read-only
- * mini-canvas of its template (issue 19). Deliberately small — the size
- * itself is a soft nudge toward small templates. Open while a spawner is
- * selected in design mode; hidden while the spawner is being dragged or
- * rotated (parent controls via `hidden`).
+ * Small popover anchored to a selected spawner's glyph, showing a mini editor
+ * for its template (issue 19). Deliberately small — the size itself is a soft
+ * nudge toward small templates. Open while a spawner is selected in design
+ * mode; hidden while the spawner is being dragged or rotated (parent
+ * controls via `hidden`).
  *
- * Two interaction surfaces beyond a static view:
+ * Interactions inside the popover canvas mirror the main canvas, scoped to
+ * the template:
  *
- *  - **Cross-scope drops from the main palette.** App.tsx queries
- *    {@link SpawnerPopoverHandle.pointToTemplate} during the palette
- *    pointerup to test if the pointer is over this popover's canvas; a hit
- *    routes the new body into the template instead of the scene.
- *  - **In-popover drag-to-move.** Pointerdown on a template body starts a
- *    drag; the parent receives `onBeginGesture` / `onMoveBody` / `onCommitGesture`
- *    so the move lands as one undo entry, the same lifecycle that root-scene
- *    body drags use.
+ *  - **Click** picks a body and surfaces it through `onSelect` so the parent
+ *    can show its props in the main right-panel. Clicking empty deselects.
+ *  - **Drag a body** translates it (template-local positions are layout-only
+ *    on emit, but they drive the popover-canvas layout).
+ *  - **Drag a handle on the selected body** runs the same resize / rotate
+ *    helpers as the main canvas (`applyResize` / `applyRotation`).
+ *  - **Drag a body outside the popover canvas** arms remove-on-release; the
+ *    wrap turns red to telegraph it.
  *
- *  Items are removed via the × in the list below the canvas. Click-to-select
- *  with editable props inside the popover is a follow-up.
+ * Cross-scope drops from the main palette: App.tsx queries
+ * {@link SpawnerPopoverHandle.pointToTemplate} during the palette pointerup
+ * to route hits into the template.
  */
 const POPOVER_W = 220;
 const POPOVER_H = 220;
@@ -43,6 +51,8 @@ const CANVAS_H = 130;
 const MIN_FRAME = 2.0;
 /** Margin (px) between the popover and the spawner glyph. */
 const ANCHOR_GAP = 14;
+/** Pixel tolerance for grabbing a handle on the selected template body. */
+const HANDLE_TOL_PX = 14;
 
 export interface SpawnerPopoverHandle {
   /**
@@ -54,38 +64,60 @@ export interface SpawnerPopoverHandle {
   pointToTemplate(clientX: number, clientY: number): Vec2 | null;
 }
 
+/** All the gesture flavors that can run inside the popover canvas. */
+type DragState =
+  | { kind: "move"; bodyId: string; offset: Vec2; outOfBounds: boolean }
+  | { kind: "rotate"; bodyId: string; startBody: Body; outOfBounds: boolean }
+  | { kind: "resize"; bodyId: string; handle: HandleId; startBody: Body; outOfBounds: boolean };
+
 export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   template: BodyTemplate;
   /** Spawner glyph's screen position (computed from main camera). */
   anchor: { x: number; y: number };
   /** Spawner's world rotation (radians); the popover's aim arrow tracks it. */
   rotation: number;
+  /** Currently-selected template body id, or null. Drives the selection
+   *  chrome + handles drawn by the mini renderer. */
+  selectedId: string | null;
   /** True while the spawner is being dragged/rotated; popover hides briefly. */
   hidden?: boolean;
-  /** Called once on pointerdown when an in-popover drag is about to start. */
+  onSelect: (bodyId: string | null) => void;
+  /** Called once on pointerdown when an in-popover gesture is about to start. */
   onBeginGesture: () => void;
-  /** Called on every drag move with the new template-local position. */
-  onMoveBody: (bodyId: string, position: Vec2) => void;
+  /** Generic patch entry point used by move / rotate / resize. */
+  onUpdateBody: (bodyId: string, patch: Partial<Omit<Body, "id">>) => void;
   /** Called once on pointerup so the parent can commit one undo entry. */
   onCommitGesture: () => void;
   /** Called on pointerup-outside-canvas instead of onCommitGesture — reverts
-   *  the in-flight move drafts so the subsequent remove lands as a single
-   *  undo entry (drag-out-to-remove). */
+   *  the in-flight drafts so the subsequent remove lands as a single undo
+   *  entry (drag-out-to-remove). */
   onCancelGesture: () => void;
   onRemove: (bodyId: string) => void;
 }>(function SpawnerPopoverInner(
-  { template, anchor, rotation, hidden, onBeginGesture, onMoveBody, onCommitGesture, onCancelGesture, onRemove },
+  {
+    template,
+    anchor,
+    rotation,
+    selectedId,
+    hidden,
+    onSelect,
+    onBeginGesture,
+    onUpdateBody,
+    onCommitGesture,
+    onCancelGesture,
+    onRemove,
+  },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const cameraRef = useRef<Camera | null>(null);
   // `outOfBounds` tracks whether the pointer is currently outside the popover
-  // canvas during a drag. While out, we hold the body at its last in-bounds
-  // position (extrapolated template coords would shoot the aggregate-bbox cue
-  // to millions of pixels, freezing the Rough.js hachure pass on the main
-  // canvas). Pointerup-while-out triggers a remove (drag-out-to-remove).
-  const dragRef = useRef<{ bodyId: string; offset: Vec2; outOfBounds: boolean } | null>(null);
+  // canvas during a drag. While out, we hold the body's last in-bounds state
+  // (extrapolated template coords would shoot the cue past the soft caps and
+  // freeze the renderer). Pointerup-while-out triggers a remove
+  // (drag-out-to-remove).
+  const dragRef = useRef<DragState | null>(null);
   const [outOfBounds, setOutOfBounds] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
 
@@ -114,18 +146,18 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     rendererRef.current = createRenderer(canvas, cam, { grid: false });
   }, []);
 
-  // Re-fit + redraw whenever the template changes.
+  // Re-fit + redraw whenever the template or selection changes. Selection
+  // matters because the renderer's draw call picks up the dashed bbox +
+  // handles from the selectedId arg.
   useEffect(() => {
     const r = rendererRef.current;
     if (!r) return;
     const cam = fitTemplate(template.bodies, CANVAS_W, CANVAS_H);
     cameraRef.current = cam;
     r.setCamera(cam);
-    r.draw(synthScene(template), designTransforms(template.bodies), null, undefined);
-  }, [template]);
+    r.draw(synthScene(template), designTransforms(template.bodies), selectedId);
+  }, [template, selectedId]);
 
-  // Expose the screen→template conversion to App.tsx so cross-scope palette
-  // drops can ask "is this pointer over me, and where in the template?".
   useImperativeHandle(
     ref,
     (): SpawnerPopoverHandle => ({
@@ -163,22 +195,53 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   };
 
   const onCanvasPointerDown = (e: React.PointerEvent) => {
-    if (template.bodies.length === 0) return;
     const point = eventToTemplateInside(e);
     if (!point) return;
+    const cam = cameraRef.current;
+    const tol = cam ? HANDLE_TOL_PX / cam.scale : 0.2;
+
+    // 1. If a body is already selected, check for a handle hit first — that
+    //    way the rotate / resize handles win over picking through to the body
+    //    beneath them (matches the main canvas).
+    if (selectedId) {
+      const sel = template.bodies.find((b) => b.id === selectedId);
+      if (sel) {
+        const handle = handleAtPoint(sel, point, tol);
+        if (handle) {
+          const kind = handle === "rotate" ? "rotate" : "resize";
+          dragRef.current =
+            kind === "rotate"
+              ? { kind: "rotate", bodyId: sel.id, startBody: cloneStartBody(sel), outOfBounds: false }
+              : { kind: "resize", bodyId: sel.id, handle, startBody: cloneStartBody(sel), outOfBounds: false };
+          beginGesture(e);
+          return;
+        }
+      }
+    }
+
+    // 2. Pick a body at the point and select it. If a body is picked, also
+    //    arm a move drag so click-and-drag works in one gesture.
     const id = bodyAtPoint(synthScene(template), 0, point);
-    if (!id) return;
-    const body = template.bodies.find((b) => b.id === id)!;
-    dragRef.current = {
-      bodyId: id,
-      offset: { x: body.position.x - point.x, y: body.position.y - point.y },
-      outOfBounds: false,
-    };
+    if (id) {
+      if (id !== selectedId) onSelect(id);
+      const body = template.bodies.find((b) => b.id === id)!;
+      dragRef.current = {
+        kind: "move",
+        bodyId: id,
+        offset: { x: body.position.x - point.x, y: body.position.y - point.y },
+        outOfBounds: false,
+      };
+      beginGesture(e);
+      return;
+    }
+
+    // 3. Empty space → deselect within the template (popover stays open;
+    //    the spawner itself remains selected in the main scope).
+    if (selectedId) onSelect(null);
+  };
+
+  const beginGesture = (e: React.PointerEvent) => {
     setOutOfBounds(false);
-    // Pointer capture can throw if the pointer id is unknown (the element
-    // was just remounted, or the event was synthesized in a test). Guard so
-    // an exception here doesn't abort the rest of the gesture setup —
-    // onBeginGesture must run for the cancel/commit lifecycle to work.
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -193,10 +256,6 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     if (!d) return;
     const point = eventToTemplateInside(e);
     if (!point) {
-      // Outside the canvas: hold the body's last in-bounds position and arm
-      // remove-on-release. Updating with extrapolated coords here was what
-      // froze the app — the aggregate-bbox cue on the main canvas would try
-      // to draw a million-pixel hachured rectangle every frame.
       if (!d.outOfBounds) {
         d.outOfBounds = true;
         setOutOfBounds(true);
@@ -207,7 +266,19 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       d.outOfBounds = false;
       setOutOfBounds(false);
     }
-    onMoveBody(d.bodyId, { x: point.x + d.offset.x, y: point.y + d.offset.y });
+    if (d.kind === "move") {
+      onUpdateBody(d.bodyId, {
+        position: { x: point.x + d.offset.x, y: point.y + d.offset.y },
+      });
+    } else if (d.kind === "rotate") {
+      onUpdateBody(d.bodyId, { rotation: applyRotation(d.startBody, point) });
+    } else {
+      const result = applyResize(d.startBody, d.handle, point, e.altKey);
+      onUpdateBody(d.bodyId, {
+        position: result.position,
+        props: { ...(d.startBody.props as Props), ...result.props },
+      });
+    }
   };
 
   const onCanvasPointerUp = (e: React.PointerEvent) => {
@@ -215,16 +286,15 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     if (!d) return;
     dragRef.current = null;
     setOutOfBounds(false);
-    // Same guarded release as the capture call above — a thrown exception
-    // here would short-circuit the cancel/commit branch below.
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {
       /* no-op */
     }
-    if (d.outOfBounds) {
-      // Discard the move drafts, then remove — the whole gesture lands as a
-      // single "removed body" undo entry rather than "moved a bunch + removed".
+    // Out-of-bounds applies only to moves — handles can't sensibly mean
+    // "remove" (you'd never finish a resize that way). For move drags, ending
+    // outside cancels the drafts and removes the body.
+    if (d.kind === "move" && d.outOfBounds) {
       onCancelGesture();
       onRemove(d.bodyId);
     } else {
@@ -277,8 +347,17 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       {template.bodies.length > 0 ? (
         <ul className="spawner-popover-items">
           {template.bodies.map((b) => (
-            <li key={b.id} className="spawner-popover-item">
-              <span className="spawner-popover-item-label">{def(b.type).label}</span>
+            <li
+              key={b.id}
+              className={`spawner-popover-item${b.id === selectedId ? " selected" : ""}`}
+            >
+              <button
+                type="button"
+                className="spawner-popover-item-label"
+                onClick={() => onSelect(b.id)}
+              >
+                {def(b.type).label}
+              </button>
               <button
                 type="button"
                 className="spawner-popover-item-del"
@@ -298,6 +377,18 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     </div>
   );
 });
+
+/** Snapshot a body for use across an in-flight gesture. The editor helpers
+ *  consume the body's *starting* state on every move call and return a fresh
+ *  result, so the snapshot must be a deep enough copy that subsequent App.tsx
+ *  patches don't mutate it under us. */
+function cloneStartBody(b: Body): Body {
+  return {
+    ...b,
+    position: { ...b.position },
+    props: { ...b.props },
+  };
+}
 
 /** Center the template in the mini-canvas at a comfortable scale. */
 function fitTemplate(bodies: Body[], w: number, h: number): Camera {

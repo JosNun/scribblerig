@@ -224,6 +224,12 @@ export default function App() {
   // (React re-renders only on bump / state changes, not on every drag move).
   // Pointerup clears this; the popover reappears at the spawner's new pose.
   const [spawnerInteracting, setSpawnerInteracting] = useState(false);
+  // The id of a body inside the currently-selected spawner's template, or
+  // null. Driven by clicks inside the popover canvas; the main right-panel
+  // shows this body's props when set (and the spawner's props otherwise).
+  // Cleared on any selection change in the main scope so it never refers to
+  // a body that doesn't belong to the now-selected spawner.
+  const [templateSelected, setTemplateSelected] = useState<string | null>(null);
   // Imperative handle into the open SpawnerPopover so onPaletteUp/onStripUp
   // can ask "is the pointer over your mini-canvas, and if so where?" to
   // route cross-scope drops into the template instead of the scene.
@@ -345,6 +351,12 @@ export default function App() {
   const roomSettings = room.settings;
   const selectedBody = selected ? (room.bodies.find((b) => b.id === selected) ?? null) : null;
   const selectedConnector = selected ? (room.connectors.find((c) => c.id === selected) ?? null) : null;
+  // Body inside the currently-selected spawner's template, when a template
+  // item is selected via the popover canvas. Null otherwise.
+  const templateBody =
+    selectedBody?.type === "spawner" && templateSelected
+      ? (selectedBody.template?.bodies.find((b) => b.id === templateSelected) ?? null)
+      : null;
   const snapOn = () => sceneRef.current.rooms[0].settings.snap;
   // Read undo/redo availability fresh each render. `bump()` after every commit
   // re-renders, so the button disabled state stays in sync without separate
@@ -510,6 +522,10 @@ export default function App() {
   const select = (id: string | null) => {
     selectedRef.current = id;
     setSelected(id);
+    // Any change to the main selection ends "I'm editing a template body" —
+    // a non-spawner selection closes the popover entirely; re-selecting the
+    // same spawner is an explicit "back to spawner" gesture.
+    setTemplateSelected(null);
   };
   const bodyById = (id: string) => sceneRef.current.rooms[0].bodies.find((b) => b.id === id);
   const connById = (id: string) => sceneRef.current.rooms[0].connectors.find((c) => c.id === id);
@@ -1459,6 +1475,19 @@ export default function App() {
         ? connectorDef(selectedConnector.type).label
         : "Room settings";
 
+  // Editing a template body's props inside a spawner: route via
+  // updateBodyInTemplate against the *currently-selected* spawner (which
+  // owns the template body). Slider scrubs collapse into one undo step per
+  // (template body, prop key) with the same mergeKey scheme as root bodies.
+  const onTemplatePropChange = (patch: Props) => {
+    if (!selectedBody || selectedBody.type !== "spawner" || !templateBody) return;
+    const next = updateBodyInTemplate(sceneRef.current, 0, selectedBody.id, templateBody.id, {
+      props: { ...templateBody.props, ...patch },
+    });
+    const keys = Object.keys(patch).join(",");
+    commitScene(next, { mergeKey: `tprop:${templateBody.id}:${keys}` });
+  };
+
   const rightPanelEl = liveMotor ? (
     <PropertyPanel
       title={connectorDef(liveMotor.type).label}
@@ -1468,7 +1497,16 @@ export default function App() {
     />
   ) : (
     building && (
-      selectedBody ? (
+      templateBody ? (
+        // A body inside the open spawner's template — its props panel takes
+        // precedence over the spawner's so the user can tweak the item itself.
+        <PropertyPanel
+          title={def(templateBody.type).label}
+          schema={def(templateBody.type).propSchema}
+          props={templateBody.props}
+          onChange={onTemplatePropChange}
+        />
+      ) : selectedBody ? (
         <PropertyPanel
           title={def(selectedBody.type).label}
           schema={def(selectedBody.type).propSchema}
@@ -1687,26 +1725,29 @@ export default function App() {
             return { x: screen.x + rect.left, y: screen.y + rect.top };
           })()}
           rotation={selectedBody.rotation}
+          selectedId={templateSelected}
           hidden={spawnerInteracting}
+          onSelect={setTemplateSelected}
           onBeginGesture={() => {
-            // Capture the pre-gesture scene so the whole drag lands as a
-            // single undo entry, mirroring the canvas body-drag lifecycle.
+            // Capture the pre-gesture scene so the whole gesture (move,
+            // resize, or rotate inside the popover) lands as a single undo
+            // entry, mirroring the canvas body-drag lifecycle.
             gestureStartRef.current = sceneRef.current;
           }}
-          onMoveBody={(bodyId, position) => {
+          onUpdateBody={(bodyId, patch) => {
             sceneRef.current = updateBodyInTemplate(
               sceneRef.current,
               0,
               selectedBody.id,
               bodyId,
-              { position },
+              patch,
             );
             bump();
           }}
           onCommitGesture={commitGesture}
           onCancelGesture={() => {
-            // Drop the in-flight move drafts and revert to the pre-gesture
-            // scene — the subsequent onRemove records one clean undo entry.
+            // Drop the in-flight drafts and revert to the pre-gesture scene —
+            // the subsequent onRemove records one clean undo entry.
             if (gestureStartRef.current) {
               sceneRef.current = gestureStartRef.current;
               gestureStartRef.current = null;
@@ -1714,6 +1755,9 @@ export default function App() {
             }
           }}
           onRemove={(bodyId) => {
+            // Removing a template body also clears it from templateSelected
+            // so the right-panel falls back to the spawner's own props.
+            if (templateSelected === bodyId) setTemplateSelected(null);
             commitScene(removeBodyFromTemplate(sceneRef.current, 0, selectedBody.id, bodyId));
           }}
         />
