@@ -912,13 +912,6 @@ button > span:not(.doodle-border__anchor),
   border-radius: 8px;
   background: #fffaf0;
   overflow: hidden;
-  transition: border-color 80ms ease, background-color 80ms ease;
-}
-/* Drag-out-to-remove: when the pointer leaves the canvas mid-drag, the
-   wrap turns red to telegraph that release will remove the body. */
-.spawner-popover-canvas-wrap.removing {
-  border-color: #b3261e;
-  background: rgba(179, 38, 30, 0.06);
 }
 .spawner-popover-canvas {
   display: block;

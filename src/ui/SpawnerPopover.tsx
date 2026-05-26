@@ -41,7 +41,8 @@ import { DoodleBorder } from "./DoodleBorder";
  *  - **Drag a handle on the selected body** runs the same resize / rotate
  *    helpers as the main canvas (`applyResize` / `applyRotation`).
  *  - **Drag a body outside the popover canvas** arms remove-on-release; the
- *    wrap turns red to telegraph it.
+ *    body itself shrinks + fades on the mini-canvas to telegraph it (same
+ *    affordance as drag-back-to-palette on the main canvas).
  *
  * Cross-scope drops from the main palette: App.tsx queries
  * {@link SpawnerPopoverHandle.pointToTemplate} during the palette pointerup
@@ -154,6 +155,18 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   const [springDrag, setSpringDrag] = useState<{ start: SnapResult; end: SnapResult } | null>(null);
   const [outOfBounds, setOutOfBounds] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  // Delete preview: when a move-drag's pointer leaves the popover canvas, the
+  // body shrinks + fades the same way drag-back-to-palette does on the main
+  // canvas. `target` is 1 while out, 0 when back in; `progress` lerps toward
+  // it via a rAF loop in the effect below, with each tick bumping
+  // `fadeTick` so the draw effect re-runs. `id` is held until progress
+  // reaches 0 so the body can ease back in after the pointer re-enters.
+  const fadeRef = useRef<{ id: string | null; target: number; progress: number }>({
+    id: null,
+    target: 0,
+    progress: 0,
+  });
+  const [fadeTick, setFadeTick] = useState(0);
 
   // Position the popover next to the anchor with edge-flip.
   useLayoutEffect(() => {
@@ -220,8 +233,51 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
         }
       }
     }
-    r.draw(synthScene(template), designTransforms(template.bodies), selectedId, overlay);
-  }, [template, selectedId, springDrag, ghost, mainScale]);
+    const f = fadeRef.current;
+    const deleteFade = f.id && f.progress > 0 ? { id: f.id, progress: f.progress } : null;
+    r.draw(
+      synthScene(template),
+      designTransforms(template.bodies),
+      selectedId,
+      overlay,
+      undefined,
+      deleteFade,
+    );
+  }, [template, selectedId, springDrag, ghost, mainScale, fadeTick]);
+
+  // Drive the fade lerp: when outOfBounds flips, run a rAF loop nudging
+  // progress toward the new target. Each tick bumps `fadeTick` so the draw
+  // effect re-runs. The body id is captured here (from the in-flight drag)
+  // so the renderer keeps applying the fade to the right body as progress
+  // eases back to 0 even after the drag has ended.
+  useEffect(() => {
+    const f = fadeRef.current;
+    f.target = outOfBounds ? 1 : 0;
+    if (outOfBounds) {
+      const d = dragRef.current;
+      if (d && d.kind === "move") f.id = d.bodyId;
+    }
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(1, Math.max(0, (now - last) / 1000));
+      last = now;
+      if (f.target !== f.progress) {
+        const FADE_PER_SEC = 8;
+        const step = dt * FADE_PER_SEC;
+        if (f.target > f.progress) {
+          f.progress = Math.min(f.target, f.progress + step);
+        } else {
+          f.progress = Math.max(f.target, f.progress - step);
+          if (f.progress === 0) f.id = null;
+        }
+        setFadeTick((t) => t + 1);
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [outOfBounds]);
 
   useImperativeHandle(
     ref,
@@ -450,6 +506,8 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       if (d.kind === "move" && d.outOfBounds) {
         onCancelGesture();
         onRemove(d.bodyId);
+        // Body is gone — collapse fade state so a subsequent drag is clean.
+        fadeRef.current = { id: null, target: 0, progress: 0 };
       } else {
         onCommitGesture();
       }
@@ -489,9 +547,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       <div className="spawner-popover-head">
         <span className="spawner-popover-title">Template</span>
       </div>
-      <div
-        className={`spawner-popover-canvas-wrap${outOfBounds ? " removing" : ""}`}
-      >
+      <div className="spawner-popover-canvas-wrap">
         <canvas
           ref={canvasRef}
           className="spawner-popover-canvas"
