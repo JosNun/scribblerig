@@ -61,6 +61,17 @@ const GRID_DOT = "rgba(43, 43, 43, 0.13)";
  *  dot count would balloon when zoomed far out). */
 const GRID_MIN_SPACING_PX = 7;
 
+/** Per-frame fade applied to a single body. Used to preview the
+ *  drag-back-to-palette delete: the body shrinks toward its center and
+ *  fades out as `progress` lerps 0→1, and back in as it lerps 1→0 when
+ *  the pointer leaves the palette. Selection chrome is suppressed for
+ *  the fading body so the dashed box doesn't outlive its contents. */
+export interface DeleteFade {
+  id: string;
+  /** 0 = no fade (normal), 1 = fully shrunk + transparent. */
+  progress: number;
+}
+
 export interface Renderer {
   draw(
     scene: Scene,
@@ -72,6 +83,7 @@ export interface Renderer {
      * on top of the design layer; never enter the picking pool.
      */
     ephemerals?: EphemeralFrame,
+    deleteFade?: DeleteFade | null,
   ): void;
   /** Swap the camera (e.g. on window resize). Invalidates the drawable cache. */
   setCamera(camera: Camera): void;
@@ -111,7 +123,7 @@ export function createRenderer(
       cam = next;
       cache.clear();
     },
-    draw(scene, transforms, selectedId, overlay, ephemerals) {
+    draw(scene, transforms, selectedId, overlay, ephemerals, deleteFade) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const room = scene.rooms[0];
 
@@ -124,9 +136,17 @@ export function createRenderer(
       // Connectors under the bodies they join.
       for (const conn of room.connectors) drawConnector(conn, transforms, conn.id === selectedId);
 
+      const fadingId = deleteFade && deleteFade.progress > 0 ? deleteFade.id : null;
       for (const body of room.bodies) {
         const t = transforms.get(body.id);
         if (!t) continue;
+        if (body.id === fadingId) {
+          // Shrink toward + fade out around the body's screen position. Selection
+          // chrome is suppressed so the dashed box / handles don't hover at full
+          // size around vanishing contents.
+          drawBodyFaded(body.type, body.id, body.props as Props, t, deleteFade!.progress);
+          continue;
+        }
         drawBody(body.type, body.id, body.props as Props, t);
         if (body.id === selectedId) {
           drawSelection(body, t);
@@ -464,6 +484,32 @@ export function createRenderer(
       );
       rc.draw(drawable);
     });
+    ctx.restore();
+  }
+
+  /**
+   * Render a body as a "preview-delete" ghost: scaled toward its center and
+   * faded out by `progress` ∈ [0,1]. Scales around the screen-space pivot so
+   * the body collapses on itself rather than drifting. Reuses the per-body
+   * drawable cache (the shrink is a context transform, not a re-roughened
+   * shape) so the wobble stays stable as it shrinks.
+   */
+  function drawBodyFaded(
+    type: Body["type"],
+    cacheId: string,
+    props: Props,
+    t: BodyTransform,
+    progress: number,
+  ): void {
+    const p = worldToScreen(cam, t.position);
+    const scale = 1 - 0.7 * progress;
+    const alpha = Math.max(0, 1 - 0.85 * progress);
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.scale(scale, scale);
+    ctx.translate(-p.x, -p.y);
+    ctx.globalAlpha = alpha;
+    drawBody(type, cacheId, props, t);
     ctx.restore();
   }
 

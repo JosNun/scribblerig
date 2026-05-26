@@ -218,6 +218,20 @@ export default function App() {
   const stripRef = useRef<HTMLDivElement | null>(null);
   const expandRunningRef = useRef(false);
   const expandReleaseRef = useRef<number | null>(null);
+  // Desktop palette panel — used as a delete drop target when an existing
+  // body is dragged back over it. The mobile strip-row reuses `stripRef`.
+  const paletteRef = useRef<HTMLDivElement | null>(null);
+  // Drag-back-to-delete preview. While the body drag's pointer is over the
+  // palette, the dragged body shrinks + fades on the canvas to signal "drop
+  // to delete". `target` is 1 when over, 0 when off; `progress` lerps toward
+  // it each frame in the render loop, so the transition eases in and out.
+  // `id` is the body to fade; held until progress fully returns to 0 so the
+  // body can ease back in after the pointer leaves the palette.
+  const deleteFadeRef = useRef<{ id: string | null; target: number; progress: number }>({
+    id: null,
+    target: 0,
+    progress: 0,
+  });
 
   // `ready` is renderer-ready (the canvas + draw loop exist); set on first
   // frame. `simReady` is Rapier-WASM-loaded; set when the background
@@ -454,12 +468,28 @@ export default function App() {
         const transforms =
           world && !isBuild ? world.readTransforms() : designTransforms(sceneRef.current);
         const ephemerals = world && !isBuild ? world.readEphemerals() : undefined;
+        // Lerp the delete-fade progress toward target (1 while the drag is over
+        // the palette, 0 otherwise). dt is clamped so a tab-switch pause
+        // doesn't snap the fade in/out on the next frame.
+        const fade = deleteFadeRef.current;
+        if (fade.target !== fade.progress) {
+          const FADE_PER_SEC = 8;
+          const step = Math.min(1, Math.max(0, dt)) * FADE_PER_SEC;
+          if (fade.target > fade.progress) {
+            fade.progress = Math.min(fade.target, fade.progress + step);
+          } else {
+            fade.progress = Math.max(fade.target, fade.progress - step);
+            if (fade.progress === 0) fade.id = null;
+          }
+        }
+        const deleteFade = isBuild && fade.id && fade.progress > 0 ? { id: fade.id, progress: fade.progress } : null;
         rendererRef.current?.draw(
           sceneRef.current,
           transforms,
           isBuild ? selectedRef.current : null,
           isBuild ? (overlayRef.current ?? undefined) : undefined,
           ephemerals,
+          deleteFade,
         );
         raf = requestAnimationFrame(frame);
       };
@@ -581,6 +611,36 @@ export default function App() {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
   const worldAt = (e: React.PointerEvent) => screenToWorld(cameraRef.current, pointerInCanvas(e));
+  /** True when (clientX, clientY) falls inside the palette — the desktop
+   *  panel on the left, or the mobile drawer's horizontal strip. Used to
+   *  light up the palette as a delete zone while a body is being dragged,
+   *  and to commit the delete on pointerup. */
+  const pointerInPalette = (clientX: number, clientY: number): boolean => {
+    const inside = (el: HTMLElement | null) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      // Skip collapsed targets: the mobile strip-row shrinks to ~0 height
+      // when the drawer is dragged fully open.
+      if (r.width < 4 || r.height < 4) return false;
+      return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+    };
+    return inside(paletteRef.current) || inside(stripRef.current);
+  };
+  /** Toggle the "drop here to delete" affordance during a body drag. Drives
+   *  the delete-fade target; the render loop lerps progress toward it. The
+   *  body id is captured the first time we enter (from the current
+   *  selection — which is the body being dragged) and held until progress
+   *  returns to 0 so it can ease back out smoothly. */
+  const setDragOverPalette = (over: boolean) => {
+    const f = deleteFadeRef.current;
+    f.target = over ? 1 : 0;
+    if (over && selectedRef.current && bodyById(selectedRef.current)) {
+      f.id = selectedRef.current;
+    }
+  };
+  /** Are we mid-fade (pointer over the palette, or still easing back out)?
+   *  Used by pointerup to decide commit-as-delete vs commit-as-move. */
+  const isDragOverPalette = () => deleteFadeRef.current.target === 1;
 
   // ----- camera (pan / zoom) -----
   /** RAF-coalesced bump for camera-driven view changes — the popover anchor
@@ -631,6 +691,7 @@ export default function App() {
     dragOffsetRef.current = null;
     handleDragRef.current = null;
     overlayRef.current = null;
+    setDragOverPalette(false);
   };
   const pinchState = () => {
     const pts = [...pointersRef.current.values()];
@@ -851,6 +912,10 @@ export default function App() {
       });
       // Moving a body off a pin/weld/motor pivot pops that connector off (issue 24).
       sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
+      // Drag-back-to-delete: light up the palette as a drop target when the
+      // pointer hovers it. The body itself stays clamped inside the room, so
+      // the palette's appearance change is the user's only signal.
+      setDragOverPalette(pointerInPalette(e.clientX, e.clientY));
     }
   };
 
@@ -876,12 +941,36 @@ export default function App() {
       endpointDragRef.current = null;
       overlayRef.current = null;
     }
+    // Drag-back-to-delete: if the pointer is over the palette at the end of
+    // a body drag, throw away the in-flight move drafts and commit a single
+    // remove instead — so undo restores the body exactly where it started.
+    const bodyDragId = dragOffsetRef.current && selectedRef.current ? selectedRef.current : null;
+    const deleteByPalette = bodyDragId && isDragOverPalette() && bodyById(bodyDragId);
     dragOffsetRef.current = null;
     handleDragRef.current = null;
+    setDragOverPalette(false);
     // Unconditional — React no-ops if already false. A conditional read would
     // see the stale closure value when pointerdown + pointerup land in the
     // same React tick (e.g. very fast clicks, or scripted interactions).
     setSpawnerInteracting(false);
+    if (deleteByPalette) {
+      // Revert in-flight position drafts so the undo entry is just the remove.
+      if (gestureStartRef.current) {
+        sceneRef.current = gestureStartRef.current;
+        gestureStartRef.current = null;
+      }
+      commitScene(removeBodyAndConnectors(sceneRef.current, 0, bodyDragId!));
+      select(null);
+      // The body is gone — collapse fade state so the next drag starts clean.
+      deleteFadeRef.current = { id: null, target: 0, progress: 0 };
+      // Skip the cycle-select / empty-tap branches below — this gesture is done.
+      selectDownRef.current = null;
+      emptyTapDownRef.current = null;
+      if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+        canvasRef.current.releasePointerCapture(e.pointerId);
+      }
+      return;
+    }
     // Land the gesture as one undo entry (no-op if nothing actually changed).
     commitGesture();
 
@@ -1787,7 +1876,11 @@ export default function App() {
               {/* One scroll container: the palette scrolls off the top as the
                   properties scroll down. The palette fades while expanded. */}
               <div className="drawer-scroll">
-                <div ref={attachStrip} className="strip-row" aria-disabled={!building}>
+                <div
+                  ref={attachStrip}
+                  className="strip-row"
+                  aria-disabled={!building}
+                >
                   {mobilePaletteEls}
                 </div>
                 <div className="drawer-props">
@@ -1801,8 +1894,11 @@ export default function App() {
         </Drawer.Root>
       ) : (
         <>
-          {/* Palette — floating left: drag a body in; click a connector to draw it */}
-          <div className="panel palette" aria-disabled={!building}>
+          {/* Palette — floating left: drag a body in; click a connector to draw it.
+              Also a "drop here to delete" target: dragging a placed body over
+              the palette shrinks + fades the body on the canvas (see the
+              deleteFade plumbing in the render loop). */}
+          <div ref={paletteRef} className="panel palette" aria-disabled={!building}>
             <DoodleBorder strokeWidth={2.5} />
             {paletteEls}
           </div>
