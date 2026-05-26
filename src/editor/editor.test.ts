@@ -60,6 +60,18 @@ describe("bodyAtPoint", () => {
     // Point inside both: the later-added body (drawn on top) wins.
     expect(bodyAtPoint(s, 0, { x: 0, y: 0 })).toBe(ball.id);
   });
+
+  it("picks a text body via its measured glyph bbox (no collider to fall back on)", () => {
+    let s = createScene();
+    // A text body has shapes() === [], so it would otherwise be unpickable.
+    // The editor measures the glyph bbox so a click on the label still hits.
+    const label = addBody(s, 0, makeBody("text", { x: 0, y: 0 }));
+    s = label.scene;
+    // A click near the center lands inside the bbox.
+    expect(bodyAtPoint(s, 0, { x: 0, y: 0 })).toBe(label.id);
+    // A click far outside the label misses.
+    expect(bodyAtPoint(s, 0, { x: 10, y: 10 })).toBeNull();
+  });
 });
 
 describe("connectorsAtPoint", () => {

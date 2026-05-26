@@ -150,11 +150,24 @@ export function compile(scene: Scene): SimWorld {
     }
   }
 
+  // Text bodies don't participate in physics — they're a render-only annotation
+  // (PRD: text-object). Strip them before buildBodies so no collider is built;
+  // their poses still need to reach the renderer in Run mode (labels stay
+  // visible while the sim runs), so capture them in a static side-table that
+  // readTransforms merges in.
+  const physicsBodies = room.bodies.filter((b) => b.type !== "text");
+  const staticVisualTransforms = new Map<string, BodyTransform>();
+  for (const b of room.bodies) {
+    if (b.type === "text") {
+      staticVisualTransforms.set(b.id, { position: b.position, rotation: b.rotation });
+    }
+  }
+
   // Welded bodies compile into a *single* compound rigid body (ADR-0009), so a
   // body id maps to its compound's rigid body plus its offset within it.
   const placements = buildBodies(
     world,
-    room.bodies,
+    physicsBodies,
     room.connectors,
     (id) => {
       const bit = spawnerBitFor.get(id);
@@ -191,6 +204,9 @@ export function compile(scene: Scene): SimWorld {
     readTransforms: () => {
       const out = new Map<string, BodyTransform>();
       for (const [id, pl] of placements) out.set(id, expandTransform(pl));
+      // Text bodies have no rigid body but the renderer still needs their pose
+      // so labels stay drawn while Run mode is active.
+      for (const [id, t] of staticVisualTransforms) out.set(id, t);
       return out;
     },
     readEphemerals: () => collectEphemerals(spawners),
@@ -527,7 +543,7 @@ function addWall(
   world.createCollider(R!.ColliderDesc.cuboid(halfX, halfY), rb);
 }
 
-function num(value: number | boolean | undefined, fallback: number): number {
+function num(value: number | boolean | string | undefined, fallback: number): number {
   return typeof value === "number" ? value : fallback;
 }
 

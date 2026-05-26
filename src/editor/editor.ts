@@ -7,6 +7,7 @@
 import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
 import { connectorDef, def, type Props, type Shape } from "../registry/registry";
+import { textBoundsLocal } from "../registry/text-bounds";
 
 /** Round a world point to the nearest grid multiple. Size 0 disables snapping. */
 export function snapToGrid(point: Vec2, gridSize: number): Vec2 {
@@ -29,9 +30,7 @@ export function bodyAtPoint(
   const bodies = scene.rooms[roomIndex].bodies;
   for (let i = bodies.length - 1; i >= 0; i--) {
     const body = bodies[i];
-    const local = toLocal(worldPoint, body.position, body.rotation);
-    const shapes = def(body.type).shapes(body.props as Props);
-    if (shapes.some((s) => containsLocal(s, local))) return body.id;
+    if (containsBody(body, worldPoint)) return body.id;
   }
   return null;
 }
@@ -42,12 +41,24 @@ export function bodiesAtPoint(scene: Scene, roomIndex: number, worldPoint: Vec2)
   const hits: string[] = [];
   for (let i = bodies.length - 1; i >= 0; i--) {
     const body = bodies[i];
-    const local = toLocal(worldPoint, body.position, body.rotation);
-    if (def(body.type).shapes(body.props as Props).some((s) => containsLocal(s, local))) {
-      hits.push(body.id);
-    }
+    if (containsBody(body, worldPoint)) hits.push(body.id);
   }
   return hits;
+}
+
+/**
+ * Hit-test a single body. Text bodies have no collider shapes, so the test
+ * runs against their measured text bbox (the same one the dashed selection
+ * rectangle wraps, so the clickable area lines up with what the user sees).
+ */
+function containsBody(body: Body, worldPoint: Vec2): boolean {
+  const local = toLocal(worldPoint, body.position, body.rotation);
+  if (body.type === "text") {
+    const { halfW, halfH } = textBoundsLocal(body.props);
+    return Math.abs(local.x) <= halfW && Math.abs(local.y) <= halfH;
+  }
+  const shapes = def(body.type).shapes(body.props as Props);
+  return shapes.some((s) => containsLocal(s, local));
 }
 
 /** Transform a world point into a body's local frame (inverse translate+rotate). */
@@ -126,6 +137,12 @@ const ROTATE_GAP = 0.8;
 
 /** Bounding half-extents of a body's collision shapes, in local meters. */
 function halfExtents(body: Body): { hw: number; hh: number } {
+  // Text has no collider; use the measured text bbox so clamping / handle
+  // placement match the rendered footprint.
+  if (body.type === "text") {
+    const b = textBoundsLocal(body.props);
+    return { hw: b.halfW, hh: b.halfH };
+  }
   let hw = 0;
   let hh = 0;
   for (const s of def(body.type).shapes(body.props as Props)) {
@@ -149,6 +166,10 @@ function isCircle(body: Body): boolean {
 export function bodyHandles(body: Body): Handle[] {
   const { hw, hh } = halfExtents(body);
   const handles: Handle[] = [{ id: "rotate", local: { x: 0, y: hh + ROTATE_GAP } }];
+  // Text resizes via the `size` prop in the panel — no corner / radius handles
+  // (a text body has only one scalar dimension, and dragging the corners of a
+  // measured-glyph box would be confusing).
+  if (body.type === "text") return handles;
   if (isCircle(body)) {
     handles.push({ id: "radius", local: { x: hw, y: 0 } });
   } else {

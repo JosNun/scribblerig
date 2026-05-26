@@ -12,6 +12,8 @@ import { NumberScrubber } from "./NumberScrubber";
  *  - **number** fields render a typeable number box + a doodle scrubber (see
  *    `NumberScrubber`).
  *  - **boolean** fields render a checkbox.
+ *  - **string** fields render a doodle-framed `<input>` (single-line) or
+ *    `<textarea>` when `multiline: true`. Used by text-body labels.
  *
  * Fields with `help` get a `?` tooltip. Adding a field to a schema surfaces it
  * here with no change to this component.
@@ -74,6 +76,36 @@ export function PropertyPanel({
               {label}
               {warnEl}
             </label>
+          );
+        }
+
+        if (f.kind === "string") {
+          const str = typeof value === "string" ? value : "";
+          return (
+            <div key={f.key} className="prop-row str-row">
+              {label}
+              <span className={`str-frame${f.multiline ? " multiline" : ""}`}>
+                <DoodleBorder strokeWidth={1.8} />
+                {f.multiline ? (
+                  <textarea
+                    className="prop-str"
+                    placeholder={f.placeholder}
+                    value={str}
+                    rows={2}
+                    onChange={(e) => onChange({ [f.key]: e.target.value })}
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    className="prop-str"
+                    placeholder={f.placeholder}
+                    value={str}
+                    onChange={(e) => onChange({ [f.key]: e.target.value })}
+                  />
+                )}
+              </span>
+              {warnEl}
+            </div>
           );
         }
 

@@ -695,3 +695,60 @@ describe("spawner emission (issue 19)", () => {
     world.free();
   });
 });
+
+// Text bodies are an authoring annotation: the renderer needs to see their pose
+// in both Build and Run modes, but Rapier must never know they exist. The sim
+// strips them before `buildBodies` and seeds their static poses on the side so
+// `readTransforms` still surfaces them.
+describe("text bodies (PRD: text-object)", () => {
+  it("creates no Rapier body but still exposes the text body's transform", () => {
+    let s = createScene();
+    const ball = addBody(s, 0, makeBody("ball", { x: 0, y: 6 }));
+    s = ball.scene;
+    const label = addBody(s, 0, {
+      ...makeBody("text", { x: 3, y: 4 }),
+      rotation: 0.5,
+    });
+    s = label.scene;
+
+    const world = compile(s);
+    // Step a frame so the ball moves but the text body stays put — proving the
+    // text pose comes from the static side-table, not a rigid body that
+    // accidentally got created.
+    const before = world.readTransforms().get(label.id)!;
+    for (let i = 0; i < 30; i++) world.step();
+    const after = world.readTransforms().get(label.id)!;
+
+    expect(before.position).toEqual({ x: 3, y: 4 });
+    expect(before.rotation).toBeCloseTo(0.5, 5);
+    expect(after.position).toEqual(before.position);
+    expect(after.rotation).toBe(before.rotation);
+    // The ball did fall, so the world is actually stepping — not a no-op.
+    expect(world.readTransforms().get(ball.id)!.position.y).toBeLessThan(6);
+    world.free();
+  });
+
+  it("ignores connectors that try to reference a text body (no anchors → drop)", () => {
+    // The UI prevents this, but a hand-crafted scene shouldn't crash compile.
+    let s = createScene();
+    const ball = addBody(s, 0, makeBody("ball", { x: 0, y: 5 }));
+    s = ball.scene;
+    const label = addBody(s, 0, makeBody("text", { x: 0, y: 3 }));
+    s = label.scene;
+    s = addConnector(s, 0, {
+      type: "spring",
+      a: { body: ball.id, local: { x: 0, y: 0 } },
+      b: { body: label.id, local: { x: 0, y: 0 } },
+      props: { restLength: 1, stiffness: 10, damping: 1, collide: false },
+    }).scene;
+
+    const world = compile(s);
+    // No throw, and the ball still falls — the dangling connector is silently
+    // dropped because the text body has no Rapier counterpart.
+    expect(() => {
+      for (let i = 0; i < 10; i++) world.step();
+    }).not.toThrow();
+    expect(world.readTransforms().get(ball.id)!.position.y).toBeLessThan(5);
+    world.free();
+  });
+});

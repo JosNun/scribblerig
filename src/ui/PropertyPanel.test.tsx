@@ -144,6 +144,42 @@ describe("PropertyPanel", () => {
     }
   });
 
+  it("renders a single-line input for single-line string fields", () => {
+    const schema: PropField[] = [
+      { key: "name", label: "Name", kind: "string", placeholder: "Type a name…" },
+    ];
+    const html = render(
+      <PropertyPanel
+        title="Test"
+        schema={schema}
+        props={{ name: "Widget" }}
+        onChange={() => {}}
+      />,
+    );
+    expect(html).toContain('class="str-frame"');
+    expect(html).toContain('type="text"');
+    expect(html).toContain('placeholder="Type a name…"');
+    // Single-line falls back to a regular <input>, never a textarea.
+    expect(html).not.toContain("<textarea");
+  });
+
+  it("renders a textarea for multiline string fields (text-body labels)", () => {
+    const schema: PropField[] = [
+      { key: "text", label: "Text", kind: "string", multiline: true, placeholder: "Type a label…" },
+    ];
+    const html = render(
+      <PropertyPanel
+        title="Test"
+        schema={schema}
+        props={{ text: "Hello\nWorld" }}
+        onChange={() => {}}
+      />,
+    );
+    expect(html).toContain('class="str-frame multiline"');
+    expect(html).toContain("<textarea");
+    expect(html).toContain('placeholder="Type a label…"');
+  });
+
   it("renders a doodle dial for angle fields", () => {
     const schema: PropField[] = [
       { key: "heading", label: "Heading", kind: "angle" },

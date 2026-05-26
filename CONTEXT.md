@@ -27,10 +27,13 @@ synonyms.
 - **Room** — a bounded play area with its own `settings` (gravity, walls, size),
   `bodies[]`, and `connectors[]`. v1 builds a single room; the schema accommodates
   many (+ portals) for v2 without rework.
-- **Body** — has mass and a collision shape (ball, platform). **Bodies are
-  the only things that collide.** Placed directly on a room. (The ball is the
-  single circular body — radius, friction, bounciness, density — covering what
-  were once separate ball and wheel types.)
+- **Body** — has a position and rotation on the room. Most body types (ball,
+  platform, spawner) also have mass and a collision shape; **text is the
+  exception — a body that participates only in rendering and selection, never
+  in collisions.** Bodies (when they have collision shapes) are still the only
+  things that collide. Placed directly on a room. (The ball is the single
+  circular body — radius, friction, bounciness, density — covering what were
+  once separate ball and wheel types.)
 - **Connector** — a constraint between two **endpoints** (spring, motor, rod, weld,
   pin). A joint, not a property of a body. **A connector has no collision geometry**
   — a motor just spins, it cannot collide.

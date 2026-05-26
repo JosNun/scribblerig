@@ -1234,6 +1234,9 @@ export default function App() {
       const templatePoint = spawnerPopoverRef.current?.pointToTemplate(e.clientX, e.clientY);
       if (templatePoint) {
         if (type === "spawner") return; // no nested spawners (silently dropped)
+        // Text labels are an authoring annotation, not something a spawner
+        // should emit; mirrors the nested-spawner ban above.
+        if (type === "text") return;
         // Clamp the drop position to a conservative template-local box. The
         // popover is small and has no scroll/pan, so a drop at the very edge
         // can otherwise land partly off-canvas and become hard to find. The

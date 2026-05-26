@@ -63,6 +63,24 @@ describe("snap", () => {
     expect(result).toEqual({ kind: "world", world: { x: -3, y: 2 } });
   });
 
+  it("skips text bodies as snap candidates (no anchors, never a body bind)", () => {
+    // A text label sits at the origin and a ball sits well to the side. A
+    // click on the label should *not* bind a connector to the label — text
+    // is render-only (PRD: text-object). The fallback is the world point.
+    let s = createScene();
+    s = addBody(s, 0, makeBody("text", { x: 0, y: 0 })).scene;
+    const ball = addBody(s, 0, makeBody("ball", { x: 5, y: 0 }));
+    s = ball.scene;
+
+    // Right on the label center: no anchor, no body bind, world fallback.
+    const onLabel = snap(s, 0, { x: 0, y: 0 }, 0.3);
+    expect(onLabel.kind).toBe("world");
+    // Far from the label, on the ball: still snaps to the ball anchor normally.
+    const onBall = snap(s, 0, { x: 5, y: 0 }, 0.3);
+    expect(onBall.kind).toBe("anchor");
+    if (onBall.kind === "anchor") expect(onBall.body).toBe(ball.id);
+  });
+
   it("endpointOf maps a snap result to a connector endpoint", () => {
     expect(endpointOf({ kind: "world", world: { x: 1, y: 2 } })).toEqual({
       world: { x: 1, y: 2 },

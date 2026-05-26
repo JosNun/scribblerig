@@ -124,9 +124,12 @@ function sanitizeTemplate(raw: Record<string, unknown>): BodyTemplate {
   // otherwise a crafted N-deep nested payload would force N recursive frames
   // (and per-level prop sanitization) just to be discarded at the post-filter.
   // Stripping early also makes deep-nesting denial-of-service payloads cheap
-  // to reject.
+  // to reject. Text bodies are also stripped here: the UI bans them from
+  // template drops (text-object PRD), and emitting labels at runtime would be
+  // silly-but-harmless — keeping the codec strict means an old payload from
+  // before the ban can't smuggle one in.
   const bodies = asArray(raw.bodies)
-    .map((b) => (isObj(b) && b.type === "spawner" ? null : sanitizeBody(b)))
+    .map((b) => (isObj(b) && (b.type === "spawner" || b.type === "text") ? null : sanitizeBody(b)))
     .filter((b): b is Body => b !== null);
   const ids = new Set(bodies.map((b) => b.id));
   const connectors = asArray(raw.connectors)
@@ -156,6 +159,11 @@ function sanitizeEndpoint(raw: unknown, bodyIds: Set<string>): Endpoint | null {
   return null;
 }
 
+/** Cap on a sanitized string prop's length. Generous enough for prose labels
+ *  but small enough that a malformed share payload can't smuggle pages of
+ *  text into the codec's working set. */
+const STRING_PROP_MAX = 2000;
+
 /** Keep only schema-declared props, default-filling anything missing or bad. */
 function sanitizeProps(schema: PropField[], defaults: Props, raw: unknown): Props {
   const out: Props = { ...defaults };
@@ -164,6 +172,10 @@ function sanitizeProps(schema: PropField[], defaults: Props, raw: unknown): Prop
       const v = raw[f.key];
       if (f.kind === "number" && typeof v === "number" && Number.isFinite(v)) out[f.key] = v;
       else if (f.kind === "boolean" && typeof v === "boolean") out[f.key] = v;
+      else if (f.kind === "angle" && typeof v === "number" && Number.isFinite(v)) out[f.key] = v;
+      else if (f.kind === "string" && typeof v === "string") {
+        out[f.key] = v.length > STRING_PROP_MAX ? v.slice(0, STRING_PROP_MAX) : v;
+      }
     }
   }
   return out;

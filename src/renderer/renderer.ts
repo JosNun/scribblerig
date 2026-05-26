@@ -14,6 +14,7 @@ import type { Body, BodyType, Connector, ConnectorType, Endpoint, Scene, Vec2 } 
 import { isBodyEndpoint } from "../scene/scene";
 import type { BodyTransform, EphemeralFrame } from "../sim/sim";
 import { def, connectorDef, type Props, type Shape } from "../registry/registry";
+import { textBoundsLocal, textLines, textSizeMeters } from "../registry/text-bounds";
 import { bodyHandles, bodyToWorld } from "../editor/editor";
 import { type Camera, worldToScreen, screenToWorld } from "./camera";
 
@@ -32,6 +33,10 @@ const WALL_THICKNESS = 0.5; // meters; mirrors the floor collider in sim
 
 const INK = "#2b2b2b";
 const FLOOR_FILL = "#9b8466";
+// Text bodies are annotation, not part of the contraption — render a notch
+// lighter than INK so labels read clearly but recede behind the bodies they
+// describe, instead of competing for attention.
+const TEXT_INK = "#5a5a5a";
 
 /**
  * Hachure/cross-hatch fill spacing & line thickness, expressed in **world
@@ -422,13 +427,21 @@ export function createRenderer(
     const props = body.props as Props;
     let hw = 0;
     let hh = 0;
-    for (const s of def(body.type).shapes(props)) {
-      if (s.kind === "circle") {
-        hw = Math.max(hw, s.radius);
-        hh = Math.max(hh, s.radius);
-      } else {
-        hw = Math.max(hw, s.halfWidth);
-        hh = Math.max(hh, s.halfHeight);
+    if (body.type === "text") {
+      // Text has no collider shapes; the dashed box wraps the measured glyphs
+      // so the affordance lines up with what the user actually sees.
+      const b = textBoundsLocal(props);
+      hw = b.halfW;
+      hh = b.halfH;
+    } else {
+      for (const s of def(body.type).shapes(props)) {
+        if (s.kind === "circle") {
+          hw = Math.max(hw, s.radius);
+          hh = Math.max(hh, s.radius);
+        } else {
+          hw = Math.max(hw, s.halfWidth);
+          hh = Math.max(hh, s.halfHeight);
+        }
       }
     }
     const pad = 6;
@@ -449,6 +462,13 @@ export function createRenderer(
   // wobbles uniquely) but ephemerals can share a per-type cache key (issue 19)
   // and reuse one drawable across every copy of the same template shape.
   function drawBody(type: Body["type"], cacheId: string, props: Props, t: BodyTransform): void {
+    // Text bodies have no collider — a parallel native-font path replaces the
+    // Rough.js drawable pipeline. Cached drawables would shimmer when the user
+    // edits the string, and adding wobble to text would hurt legibility.
+    if (type === "text") {
+      drawText(props, t);
+      return;
+    }
     const typeDef = def(type);
     const seed = hashSeed(cacheId);
     const p = worldToScreen(cam, t.position);
@@ -484,6 +504,37 @@ export function createRenderer(
       );
       rc.draw(drawable);
     });
+    ctx.restore();
+  }
+
+  /**
+   * Bare-ink label rendering for text bodies. No Rough.js, no fill — just the
+   * Mynerve font over the paper background. Size is in body-local meters, so
+   * it scales with the camera the same way every other body does (ADR-0004
+   * world-fill spirit). Multi-line: lines split on `\n`, stacked from the top
+   * of the body's local bounding box downward.
+   */
+  function drawText(props: Props, t: BodyTransform): void {
+    const sizeMeters = textSizeMeters(props);
+    const lines = textLines(props);
+    if (lines.length === 0) return;
+    const sizePx = Math.max(1, sizeMeters * cam.scale);
+    const p = worldToScreen(cam, t.position);
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(-t.rotation);
+    ctx.font = `${sizePx}px Mynerve, sans-serif`;
+    ctx.fillStyle = TEXT_INK;
+    ctx.textAlign = "center";
+    // `middle` baseline lets us position each line's center on integer y
+    // offsets that respect the body's local bbox.
+    ctx.textBaseline = "middle";
+    const totalHeightPx = lines.length * sizePx;
+    for (let i = 0; i < lines.length; i++) {
+      const yPx = -totalHeightPx / 2 + sizePx * (i + 0.5);
+      ctx.fillText(lines[i], 0, yPx);
+    }
     ctx.restore();
   }
 

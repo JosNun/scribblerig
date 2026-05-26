@@ -10,8 +10,8 @@ import {
 } from "./registry";
 
 describe("registry", () => {
-  it("offers ball, platform, and spawner as placeable body types", () => {
-    expect(bodyTypes().map((d) => d.type)).toEqual(["ball", "platform", "spawner"]);
+  it("offers ball, platform, spawner, and text as placeable body types", () => {
+    expect(bodyTypes().map((d) => d.type)).toEqual(["ball", "platform", "spawner", "text"]);
   });
 
   it("declares a directional rectangular glyph and the four spawner props", () => {
@@ -73,10 +73,23 @@ describe("registry", () => {
     for (const d of bodyTypes()) {
       for (const field of d.propSchema) {
         expect(d.defaults).toHaveProperty(field.key);
-        const expected = field.kind === "boolean" ? "boolean" : "number";
+        const expected =
+          field.kind === "boolean" ? "boolean" : field.kind === "string" ? "string" : "number";
         expect(typeof d.defaults[field.key]).toBe(expected);
       }
     }
+  });
+
+  it("declares a text body that contributes nothing to physics or snapping", () => {
+    const text = def("text");
+    // No collider — sim skips it; the renderer keys off type === "text".
+    expect(text.shapes(text.defaults)).toEqual([]);
+    // No anchors — snapping auto-excludes it as a connector target.
+    expect(text.anchors(text.defaults)).toEqual([]);
+    // Static so future motion modes have a place to flip without a migration.
+    expect(text.isStatic(text.defaults)).toBe(true);
+    expect(text.propSchema.map((f) => f.key)).toEqual(["text", "size"]);
+    expect(text.defaults).toEqual({ text: "Label", size: 0.4, static: true });
   });
 
   it("declares no render-only marks (the spinning hachure fill shows rotation)", () => {

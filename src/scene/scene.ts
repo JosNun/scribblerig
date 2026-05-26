@@ -9,7 +9,7 @@
 
 export type Vec2 = { x: number; y: number };
 
-export type BodyType = "ball" | "platform" | "spawner";
+export type BodyType = "ball" | "platform" | "spawner" | "text";
 
 /**
  * The contents a spawner emits during sim: a self-contained subgraph in the
@@ -30,7 +30,7 @@ export interface Body {
   /** Rotation in radians. */
   rotation: number;
   /** Schema-driven properties (radius, restitution, friction, static?, …). */
-  props: Record<string, number | boolean>;
+  props: Record<string, number | boolean | string>;
   /** Spawner-only: the bodies + connectors emitted as copies during sim. */
   template?: BodyTemplate;
 }
@@ -54,7 +54,7 @@ export interface Connector {
   a: Endpoint;
   b: Endpoint;
   /** Schema-driven properties (spring: stiffness, restLength, damping). */
-  props: Record<string, number | boolean>;
+  props: Record<string, number | boolean | string>;
 }
 
 /** Narrowing helper: is this endpoint anchored to a body? */

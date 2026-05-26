@@ -11,7 +11,7 @@
 
 import type { Body, BodyType, Connector, ConnectorType, Endpoint, Vec2 } from "../scene/scene";
 
-export type Props = Record<string, number | boolean>;
+export type Props = Record<string, number | boolean | string>;
 
 export type Shape =
   | { kind: "circle"; radius: number }
@@ -45,11 +45,17 @@ export interface PropField {
    *  - `boolean` — sketchy checkbox.
    *  - `angle`   — doodle dial; value is degrees in [0, 360), 0° = down,
    *               increasing CCW (the canvas convention).
+   *  - `string`  — text input (single-line by default; `multiline: true`
+   *               switches to a small textarea). Used by the text body.
    */
-  kind: "number" | "boolean" | "angle";
+  kind: "number" | "boolean" | "angle" | "string";
   min?: number;
   max?: number;
   step?: number;
+  /** String-kind only: placeholder text when the field is empty. */
+  placeholder?: string;
+  /** String-kind only: render as a textarea instead of a single-line input. */
+  multiline?: boolean;
   /** One-line explanation shown as a help tooltip in the property panel. */
   help?: string;
   /**
@@ -57,7 +63,7 @@ export interface PropField {
    * for cross-field checks). Returning a non-empty string renders a small
    * caution line under the control — e.g. "may slow the sim" past a soft cap.
    */
-  warn?: (value: number | boolean | undefined, allProps: Props) => string | null;
+  warn?: (value: number | boolean | string | undefined, allProps: Props) => string | null;
 }
 
 /**
@@ -185,12 +191,54 @@ const SPAWNER: BodyTypeDef = {
   style: { fill: "#5e7a9c", fillStyle: "cross-hatch" },
 };
 
+// A label / note dropped onto the canvas. No collider, no anchors — it
+// participates only in rendering and selection (PRD: text-object). The renderer
+// keys off `type === "text"` for the bare-ink path; sim skips it; snapping
+// auto-excludes it via the empty anchors().
+const TEXT: BodyTypeDef = {
+  type: "text",
+  label: "Text",
+  defaults: { text: "Label", size: 0.4, static: true },
+  // Always static — text never moves under physics. Encoded as a prop so future
+  // motion modes (e.g. "label follows the ball") have a place to flip without a
+  // schema migration.
+  isStatic: () => true,
+  // No collider → sim's compile step has nothing to build for text bodies.
+  shapes: () => [],
+  // No anchors → snapping filters text out of connector candidates.
+  anchors: () => [],
+  propSchema: [
+    {
+      key: "text",
+      label: "Text",
+      kind: "string",
+      placeholder: "Type a label…",
+      multiline: true,
+      help: "The label drawn on the canvas. Newlines start a new line.",
+    },
+    {
+      key: "size",
+      label: "Size",
+      kind: "number",
+      min: 0.15,
+      max: 1.5,
+      step: 0.05,
+      help: "Text height in meters — the label scales with zoom like everything else.",
+    },
+  ],
+  // Style is unused (the text renderer draws bare ink), but the field is
+  // required by BodyTypeDef. Stays neutral so a future fallback path doesn't
+  // accidentally paint a hachured box.
+  style: { fill: "transparent", fillStyle: "solid" },
+};
+
 /** Ordered registry; array order is the palette order and is deterministic. */
-const ORDER: BodyTypeDef[] = [BALL, PLATFORM, SPAWNER];
+const ORDER: BodyTypeDef[] = [BALL, PLATFORM, SPAWNER, TEXT];
 const BY_TYPE: Record<BodyType, BodyTypeDef> = {
   ball: BALL,
   platform: PLATFORM,
   spawner: SPAWNER,
+  text: TEXT,
 };
 
 export function bodyTypes(): BodyTypeDef[] {

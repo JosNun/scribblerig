@@ -271,6 +271,75 @@ describe("sanitizeScene (spawner templates)", () => {
   });
 });
 
+// Text bodies (PRD: text-object) — a non-colliding body type for labels and
+// notes. The codec needs to preserve their `text` string prop through
+// round-trip (the existing sanitizeProps only handled number/boolean) and
+// strip text bodies from spawner templates the same way it strips nested
+// spawners (the UI bans both at drop time).
+describe("sanitizeScene (text bodies)", () => {
+  it("round-trips a text body's multiline label through encode/decode", () => {
+    let s = createScene();
+    const t = addBody(s, 0, {
+      type: "text",
+      position: { x: 1, y: 2 },
+      rotation: 0,
+      props: { text: "first line\nsecond line", size: 0.6, static: true },
+    });
+    s = t.scene;
+    expect(decodeScene(encodeScene(s))).toEqual(s);
+  });
+
+  it("caps a string prop at the per-prop length budget", () => {
+    const out = sanitizeScene({
+      rooms: [
+        {
+          bodies: [
+            {
+              id: "b1",
+              type: "text",
+              position: { x: 0, y: 0 },
+              rotation: 0,
+              props: { text: "x".repeat(5000), size: 0.4 },
+            },
+          ],
+          connectors: [],
+        },
+      ],
+    })!;
+    // 2000-char cap from the codec; longer payloads can't be smuggled in.
+    expect((out.rooms[0].bodies[0].props.text as string).length).toBe(2000);
+  });
+
+  it("strips a text body nested inside a spawner's template", () => {
+    // Mirrors the nested-spawner ban: the UI prevents the drop, the codec
+    // strips it on import so an old/hand-crafted payload can't get in either.
+    const out = sanitizeScene({
+      rooms: [
+        {
+          bodies: [
+            {
+              id: "b1",
+              type: "spawner",
+              position: { x: 0, y: 1 },
+              rotation: 0,
+              props: {},
+              template: {
+                bodies: [
+                  { id: "b2", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: {} },
+                  { id: "b3", type: "text", position: { x: 0, y: 0 }, rotation: 0, props: { text: "Note", size: 0.4 } },
+                ],
+                connectors: [],
+              },
+            },
+          ],
+          connectors: [],
+        },
+      ],
+    })!;
+    expect(out.rooms[0].bodies[0].template?.bodies.map((b) => b.id)).toEqual(["b2"]);
+  });
+});
+
 describe("scene.title", () => {
   it("round-trips a title through encode → decode", () => {
     const s: Scene = { ...sampleScene(), title: "My rolling-ball machine" };

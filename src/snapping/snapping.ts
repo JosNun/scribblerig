@@ -26,7 +26,8 @@ export function snap(
 ): SnapResult {
   const bodies = scene.rooms[roomIndex].bodies;
 
-  // 1) Nearest named anchor within the threshold.
+  // 1) Nearest named anchor within the threshold. Bodies with no anchors
+  //    (e.g. text labels) contribute nothing here and are silently skipped.
   let best: { body: string; name: string; local: Vec2; world: Vec2 } | null = null;
   let bestDist = anchorThreshold;
   for (const body of bodies) {
@@ -41,11 +42,15 @@ export function snap(
   }
   if (best) return { kind: "anchor", ...best };
 
-  // 2) Over a body → bind to the exact local point under the cursor.
+  // 2) Over a body → bind to the exact local point under the cursor. Bodies
+  //    that don't expose anchors aren't valid connector targets either (a
+  //    spring shouldn't anchor to a label), so skip them here too.
   const hit = bodyAtPoint(scene, roomIndex, point);
   if (hit) {
     const body = bodies.find((b) => b.id === hit)!;
-    return { kind: "body", body: hit, local: bodyToLocal(body, point), world: point };
+    if (def(body.type).anchors(body.props as Props).length > 0) {
+      return { kind: "body", body: hit, local: bodyToLocal(body, point), world: point };
+    }
   }
 
   // 3) Empty space → a fixed point in world space.
