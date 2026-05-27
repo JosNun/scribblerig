@@ -24,6 +24,7 @@ import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
 import { isBodyEndpoint } from "../scene/scene";
 import { connectorDef, def, type Props, type Shape } from "../registry/registry";
 import { fitCamera, worldToScreen, type Camera } from "../renderer/camera";
+import { textLines, textSizeMeters } from "../registry/text-bounds";
 
 const DEFAULT_WIDTH = 1200;
 const DEFAULT_HEIGHT = 630;
@@ -32,6 +33,9 @@ const ROOM_MARGIN = 1; // meters around the room when fitting
 const INK = "#2b2b2b";
 const PAPER = "#fdf6e3";
 const FLOOR_FILL = "#9b8466";
+// Mirrors the canvas renderer's text colour — slightly lighter than INK so
+// labels read as ink-on-paper rather than competing with the body strokes.
+const TEXT_INK = "#5a5a5a";
 
 // Mirrors `renderer.ts`'s wall thickness so the OG image lines up with the sim.
 const WALL_THICKNESS = 0.5;
@@ -55,6 +59,43 @@ function worldFillOptions(scale: number): {
 export interface RenderSvgOptions {
   width?: number;
   height?: number;
+  /**
+   * When false, skip the room frame and walls — bodies and connectors render
+   * over `paper` (or transparency). Useful for the OG default where the
+   * frame distracts from a tight content crop, and for the favicon where it
+   * would dominate at 16–32px. Default true.
+   */
+  chrome?: boolean;
+  /**
+   * When false, omit the paper-coloured background rect — the SVG renders
+   * with transparent background. Defaults to whatever `chrome` is, so the
+   * favicon (chrome:false) gets transparency for free while the OG default
+   * (chrome:false, paper:true) keeps the card background.
+   */
+  paper?: boolean;
+  /**
+   * World-meter margin around the room when fitting the camera. The default
+   * leaves room for walls and "breathing space" around the scene; the
+   * favicon overrides it to ~0 so the body fills the canvas.
+   */
+  margin?: number;
+  /**
+   * World-space rectangle to fill the canvas with, overriding the default
+   * room-based fit. `width`/`height` should match the canvas aspect ratio
+   * or the scene will stretch. Useful for cropping to the content bbox
+   * instead of the whole room (the default OG asset uses this).
+   */
+  viewport?: { centerX: number; centerY: number; width: number; height: number };
+  /**
+   * Override the pixels-per-meter scale used for hachure / cross-hatch fills
+   * (gap width, stroke weight). Default tracks `camera.scale`, which keeps
+   * fill density consistent per-body across the canvas renderer. At extreme
+   * zoom-ins (e.g. the OG default crops a small region to a 1200px canvas),
+   * the world-scaled gaps grow to 20–30 px, revealing individual hatch lines
+   * instead of reading as a fill — passing a smaller fillScale here restores
+   * the dense look the canvas renderer shows at its typical zoom.
+   */
+  fillScale?: number;
 }
 
 /**
@@ -64,30 +105,38 @@ export interface RenderSvgOptions {
 export function renderSceneToSvg(scene: Scene, opts: RenderSvgOptions = {}): string {
   const width = opts.width ?? DEFAULT_WIDTH;
   const height = opts.height ?? DEFAULT_HEIGHT;
+  const chrome = opts.chrome ?? true;
+  const paper = opts.paper ?? chrome;
+  const margin = opts.margin ?? ROOM_MARGIN;
   const room = scene.rooms[0];
   const gen = new RoughGenerator();
   const parts: string[] = [];
 
   parts.push(svgOpen(width, height));
-  parts.push(paperBackground(width, height));
+  if (paper) parts.push(paperBackground(width, height));
 
   if (room) {
-    const camera = fitCamera(
-      room.settings.size.width,
-      room.settings.size.height,
-      width,
-      height,
-      ROOM_MARGIN,
-    );
-    drawRoomFrame(room.settings.size, camera, gen, parts);
-    drawWalls(room.settings.walls, room.settings.size, camera, gen, parts);
+    const camera = opts.viewport
+      ? viewportCamera(opts.viewport, width, height)
+      : fitCamera(
+          room.settings.size.width,
+          room.settings.size.height,
+          width,
+          height,
+          margin,
+        );
+    const fillScale = opts.fillScale ?? camera.scale;
+    if (chrome) {
+      drawRoomFrame(room.settings.size, camera, gen, parts);
+      drawWalls(room.settings.walls, room.settings.size, camera, fillScale, gen, parts);
+    }
     // Connectors paint under the bodies they join, matching the canvas
     // renderer order.
     for (const conn of room.connectors) {
       drawConnector(conn, room.bodies, camera, parts);
     }
     for (const body of room.bodies) {
-      drawBody(body, camera, gen, parts);
+      drawBody(body, camera, fillScale, gen, parts);
     }
   }
 
@@ -132,16 +181,17 @@ function drawWalls(
   walls: { floor: boolean; ceiling: boolean; left: boolean; right: boolean },
   size: { width: number; height: number },
   camera: Camera,
+  fillScale: number,
   gen: RoughGenerator,
   parts: string[],
 ): void {
   const w = size.width;
   const h = size.height;
   const t = WALL_THICKNESS;
-  if (walls.floor) drawWall("floor", -w / 2, 0, w, t, camera, gen, parts);
-  if (walls.ceiling) drawWall("ceiling", -w / 2, h + t, w, t, camera, gen, parts);
-  if (walls.left) drawWall("left", -w / 2 - t, h, t, h, camera, gen, parts);
-  if (walls.right) drawWall("right", w / 2, h, t, h, camera, gen, parts);
+  if (walls.floor) drawWall("floor", -w / 2, 0, w, t, camera, fillScale, gen, parts);
+  if (walls.ceiling) drawWall("ceiling", -w / 2, h + t, w, t, camera, fillScale, gen, parts);
+  if (walls.left) drawWall("left", -w / 2 - t, h, t, h, camera, fillScale, gen, parts);
+  if (walls.right) drawWall("right", w / 2, h, t, h, camera, fillScale, gen, parts);
 }
 
 function drawWall(
@@ -151,6 +201,7 @@ function drawWall(
   wM: number,
   hM: number,
   camera: Camera,
+  fillScale: number,
   gen: RoughGenerator,
   parts: string[],
 ): void {
@@ -162,14 +213,45 @@ function drawWall(
     strokeWidth: 2,
     roughness: 1.4,
     seed: hashSeed(`wall-${key}`),
-    ...worldFillOptions(camera.scale),
+    ...worldFillOptions(fillScale),
   });
   parts.push(drawableToSvg(gen, drawable));
 }
 
+/**
+ * Build a camera that fills the canvas with the given world-space rectangle.
+ * No letterboxing — caller is responsible for matching the rectangle's aspect
+ * to `canvasW`/`canvasH`.
+ */
+function viewportCamera(
+  vp: { centerX: number; centerY: number; width: number; height: number },
+  canvasW: number,
+  canvasH: number,
+): Camera {
+  const scale = canvasW / vp.width;
+  return {
+    scale,
+    originX: canvasW / 2 - vp.centerX * scale,
+    originY: canvasH / 2 + vp.centerY * scale,
+  };
+}
+
 // ---------- bodies --------------------------------------------------------
 
-function drawBody(body: Body, camera: Camera, gen: RoughGenerator, parts: string[]): void {
+function drawBody(
+  body: Body,
+  camera: Camera,
+  fillScale: number,
+  gen: RoughGenerator,
+  parts: string[],
+): void {
+  // Text bodies are bare ink (no Rough.js path, no fill) — same convention as
+  // the canvas renderer. Emit an SVG <text> element and skip the shape/mark
+  // pipeline entirely.
+  if (body.type === "text") {
+    drawTextBody(body, camera, parts);
+    return;
+  }
   const typeDef = def(body.type);
   const props = body.props as Props;
   const seed = hashSeed(body.id);
@@ -190,7 +272,7 @@ function drawBody(body: Body, camera: Camera, gen: RoughGenerator, parts: string
       strokeWidth: 2,
       roughness: 1.4,
       seed,
-      ...worldFillOptions(camera.scale),
+      ...worldFillOptions(fillScale),
     });
     parts.push(drawableToSvg(gen, drawable));
   }
@@ -207,6 +289,46 @@ function drawBody(body: Body, camera: Camera, gen: RoughGenerator, parts: string
   }
 
   parts.push("</g>");
+}
+
+/**
+ * Text body → one `<text>` element per line, stacked vertically in the body's
+ * local space. Font size scales with the camera so text reads at the same
+ * apparent scale as every other body. Mirrors `renderer.ts`'s `drawText`:
+ * Mynerve, center-aligned, lines spaced by `sizePx`.
+ *
+ * No font is bundled into the SVG — callers that need a guaranteed-resolved
+ * font (e.g. resvg rasterising to PNG) pass it through their own font
+ * pipeline; browsers serving the SVG inherit Mynerve from index.html.
+ */
+function drawTextBody(body: Body, camera: Camera, parts: string[]): void {
+  const props = body.props as { text?: string; size?: number };
+  const lines = textLines(props);
+  if (lines.length === 0) return;
+  const sizePx = Math.max(1, textSizeMeters(props) * camera.scale);
+  const p = worldToScreen(camera, body.position);
+  const rotDeg = (-body.rotation * 180) / Math.PI;
+  parts.push(
+    `<g transform="translate(${num(p.x)} ${num(p.y)}) rotate(${num(rotDeg)})">`,
+  );
+  const totalH = lines.length * sizePx;
+  for (let i = 0; i < lines.length; i++) {
+    const y = -totalH / 2 + sizePx * (i + 0.5);
+    parts.push(
+      `<text x="0" y="${num(y)}" font-family="Mynerve, sans-serif"` +
+        ` font-size="${num(sizePx)}" fill="${TEXT_INK}"` +
+        ` text-anchor="middle" dominant-baseline="middle">${escText(lines[i])}</text>`,
+    );
+  }
+  parts.push("</g>");
+}
+
+/** Minimal XML text-content escaper for the chars that break parsing. */
+function escText(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function roughShape(
@@ -357,10 +479,16 @@ function drawableToSvg(gen: RoughGenerator, drawable: Drawable): string {
         `<path d="${d}" fill="${opts.fill ?? "none"}" stroke="none" fill-rule="evenodd"/>`,
       );
     } else {
+      // Hachure / cross-hatch sets ARE the fill — their stroke colour is the
+      // body's fill colour, not its outline. Mirrors rough.js's own SVG
+      // renderer (node_modules/roughjs/bin/svg.js#fillSketch). Without this,
+      // the hatching paints in INK and the body reads as black-on-black.
       const sw =
         set.type === "fillSketch" ? (opts.fillWeight ?? 1) : (opts.strokeWidth ?? 1);
+      const colour =
+        set.type === "fillSketch" ? (opts.fill ?? INK) : (opts.stroke ?? INK);
       out.push(
-        `<path d="${d}" stroke="${opts.stroke ?? INK}" stroke-width="${sw}"` +
+        `<path d="${d}" stroke="${colour}" stroke-width="${sw}"` +
           ` fill="none" stroke-linecap="round"/>`,
       );
     }

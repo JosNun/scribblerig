@@ -9,6 +9,7 @@
     "preview": "bun run build && wrangler dev",
     "test": "vitest run",
     "test:watch": "vitest",
+    "generate-assets": "bun scripts/generate-default-assets.mjs",
     "deploy": "bun run build && wrangler deploy"
   },
   "dependencies": {

@@ -8,6 +8,24 @@
     />
     <meta name="theme-color" content="#fdf6e3" />
     <title>ScribbleRig</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!--
+      Default OpenGraph preview for the bare homepage. The worker's per-scene
+      handlers (`/?s=…`, `/s/<id>`) append their own og:* tags to <head>;
+      crawlers honour the last matching tag, so the per-scene image wins on
+      share URLs without us stripping these defaults first.
+    -->
+    <meta property="og:title" content="ScribbleRig" />
+    <meta property="og:description" content="A scribble-physics sandbox you can share by link." />
+    <meta property="og:image" content="https://scribblerig.app/og-default.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ScribbleRig" />
+    <meta name="twitter:description" content="A scribble-physics sandbox you can share by link." />
+    <meta name="twitter:image" content="https://scribblerig.app/og-default.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
