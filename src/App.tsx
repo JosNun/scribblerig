@@ -637,6 +637,15 @@ export default function App() {
 
   // ----- transport -----
   const play = () => {
+    // Resume from pause: world is still alive, just unfreeze the clock so the
+    // sim picks up where it stopped. Without this branch, Play after Pause is
+    // indistinguishable from Reset → Play (both recompile from the design
+    // graph), collapsing Pause into "freeze in place."
+    if (clockRef.current.state === "paused" && worldRef.current) {
+      clockRef.current.play();
+      setState("running");
+      return;
+    }
     worldRef.current?.free();
     worldRef.current = compile(sceneRef.current);
     clockRef.current.play();

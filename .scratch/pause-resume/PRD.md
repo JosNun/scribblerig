@@ -1,6 +1,6 @@
 # PRD: Pause should resume, not restart
 
-Status: needs-triage
+Status: done
 
 ## Parent
 
