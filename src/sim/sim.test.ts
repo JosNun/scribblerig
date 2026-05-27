@@ -617,12 +617,12 @@ describe("spawner emission (issue 19)", () => {
   it("emits one item per interval; nothing emitted before the first tick fires", () => {
     const { scene } = spawnerScene({ interval: 0.5, maxAlive: 10 });
     const world = compile(scene);
-    // 6 steps = 0.1s — well before the first interval fires.
+    // 6 steps = 0.1s — well before the first emit (warmup pushes it to T=1s).
     for (let i = 0; i < 6; i++) world.step();
     expect(world.readEphemerals().bodies).toHaveLength(0);
-    // 96 steps = 1.6s → three intervals at 0.5s have fired.
+    // 96 steps = 1.6s → first emit at T=1.0 (warmup) + second at T=1.5.
     for (let i = 0; i < 90; i++) world.step();
-    expect(world.readEphemerals().bodies).toHaveLength(3);
+    expect(world.readEphemerals().bodies).toHaveLength(2);
     world.free();
   });
 
@@ -639,8 +639,9 @@ describe("spawner emission (issue 19)", () => {
       },
     });
     const world = compile(scene);
-    // Two intervals → first ball, then platform; order preserved in alive FIFO.
-    for (let i = 0; i < 70; i++) world.step();
+    // First emit at T=1s (warmup), second at T=1.5s → 96 steps catches both;
+    // order preserved in alive FIFO.
+    for (let i = 0; i < 96; i++) world.step();
     const types = world.readEphemerals().bodies.map((b) => b.type);
     expect(types).toEqual(["ball", "platform"]);
     world.free();
@@ -650,7 +651,8 @@ describe("spawner emission (issue 19)", () => {
     const { scene } = spawnerScene({ interval: 0.5, maxAlive: 2 });
     const world = compile(scene);
     let everOverCap = false;
-    // 150 steps = 2.5s → 5 emissions; alive count must never exceed 2.
+    // 150 steps = 2.5s → emissions at T=1.0, 1.5, 2.0, 2.5 (warmup delays the
+    // first); alive count must never exceed 2.
     for (let i = 0; i < 150; i++) {
       world.step();
       if (world.readEphemerals().bodies.length > 2) everOverCap = true;
@@ -665,7 +667,9 @@ describe("spawner emission (issue 19)", () => {
     // emitted with speed=5 should be visibly *above* the spawner soon after
     // emission, before gravity has time to drag them back down.
     const { scene } = spawnerScene({
-      interval: 0.1,
+      // Long interval keeps the single ball alive after the warmup emit so we
+      // can observe it in flight without immediate replacement.
+      interval: 10,
       maxAlive: 1,
       speed: 5,
       rotation: Math.PI / 2,
@@ -677,8 +681,9 @@ describe("spawner emission (issue 19)", () => {
       },
     });
     const world = compile(scene);
-    // 12 steps = 0.2s — first emit at frame 6, then 6 more frames of flight.
-    for (let i = 0; i < 12; i++) world.step();
+    // 72 steps = 1.2s — first (and only) emit at T=1.0 (warmup), then 0.2s of
+    // upward flight at speed=5.
+    for (let i = 0; i < 72; i++) world.step();
     const eph = world.readEphemerals().bodies;
     expect(eph).toHaveLength(1);
     expect(eph[0].transform.position.y).toBeGreaterThan(5);
@@ -686,10 +691,13 @@ describe("spawner emission (issue 19)", () => {
   });
 
   it("emitted items carry stable ephemeral ids namespaced by their spawner and sequence", () => {
-    const { scene, spawnerId } = spawnerScene({ interval: 0.1, maxAlive: 5 });
+    const { scene, spawnerId } = spawnerScene({ interval: 0.5, maxAlive: 5 });
     const world = compile(scene);
-    for (let i = 0; i < 30; i++) world.step();
-    for (const b of world.readEphemerals().bodies) {
+    // 90 steps = 1.5s → emits at T=1.0 and T=1.5 (warmup delays the first).
+    for (let i = 0; i < 90; i++) world.step();
+    const bodies = world.readEphemerals().bodies;
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const b of bodies) {
       expect(b.id.startsWith(`ephem:${spawnerId}:`)).toBe(true);
     }
     world.free();

@@ -190,7 +190,12 @@ export function compile(scene: Scene): SimWorld {
       placement: placements.get(b.id)!,
       bit: spawnerBitFor.get(b.id)!,
       items: templateItems(b.template?.bodies ?? [], b.template?.connectors ?? []),
-      timer: 0,
+      // Start the timer pre-charged so the **first** emit lands at T=1s after
+      // compile, regardless of how long `interval` is. (e.g. interval=15 ⇒
+      // emits at T=1, T=16, T=31…) The user gets a beat to see the scene
+      // before action starts, instead of staring at a static board for the
+      // entire first interval. Subsequent emits step at `interval` as usual.
+      timer: num(b.props.interval, 1) - 1,
       rrIndex: 0,
       alive: [],
       nextSeq: 1,

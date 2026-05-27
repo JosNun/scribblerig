@@ -125,7 +125,7 @@ const BALL: BodyTypeDef = {
 const PLATFORM: BodyTypeDef = {
   type: "platform",
   label: "Platform",
-  defaults: { width: 3, height: 0.4, friction: 0.6, static: true },
+  defaults: { width: 3, height: 0.4, friction: 0.6, restitution: 0, static: true },
   isStatic: (p) => p.static !== false,
   shapes: (p) => [
     { kind: "box", halfWidth: n(p, "width", 3) / 2, halfHeight: n(p, "height", 0.4) / 2 },
@@ -134,6 +134,7 @@ const PLATFORM: BodyTypeDef = {
     { key: "width", label: "Width", kind: "number", min: 0.5, max: 12, step: 0.1, help: "How wide the platform is, in meters." },
     { key: "height", label: "Height", kind: "number", min: 0.1, max: 4, step: 0.1, help: "How thick the platform is, in meters." },
     { key: "friction", label: "Friction", kind: "number", min: 0, max: 1, step: 0.05, help: "Grip — high friction stops things sliding across it." },
+    { key: "restitution", label: "Bounciness", kind: "number", min: 0, max: 1, step: 0.05, help: "Energy returned on impact: 0 is a dead surface, 1 reflects fully. Averaged with the other body's bounciness at contact." },
     { key: "static", label: "Static (immovable)", kind: "boolean", help: "When on, the platform is fixed in place and ignores gravity. Turn off to let it move and fall." },
   ],
   anchors: (p) => {
@@ -320,7 +321,7 @@ const MOTOR: ConnectorTypeDef = {
   defaults: { speed: 4, torque: 20, reverse: false },
   propSchema: [
     { key: "speed", label: "Speed", kind: "number", min: 0, max: 30, step: 0.5, help: "How fast the motor spins, in radians per second. Editable while running." },
-    { key: "torque", label: "Torque", kind: "number", min: 1, max: 200, step: 1, help: "How hard the motor drives toward its target speed — higher torque spins heavier bodies up faster." },
+    { key: "torque", label: "Torque", kind: "number", min: 1, max: 10000, step: 1, help: "How hard the motor drives toward its target speed — higher torque spins heavier bodies up faster, and resists stalling under load." },
     { key: "reverse", label: "Reverse", kind: "boolean", help: "Flip the spin direction (clockwise vs counter-clockwise)." },
   ],
   stroke: "#3b8c5a",
