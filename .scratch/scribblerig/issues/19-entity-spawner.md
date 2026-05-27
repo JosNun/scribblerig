@@ -1,6 +1,6 @@
 # 19 — Entity spawner
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

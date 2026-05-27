@@ -2,7 +2,7 @@
 
 # PRD: Text object — labels and notes in a scene
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

@@ -2,7 +2,7 @@
 
 # PRD: Onboarding tutorial — a playable demo scene that teaches every type
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

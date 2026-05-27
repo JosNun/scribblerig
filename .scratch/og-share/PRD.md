@@ -1,6 +1,6 @@
 # PRD: Named shares + OpenGraph previews
 
-Status: ready-for-agent
+Status: done
 
 Parent PRD: [`.scratch/scribblerig/PRD.md`](../scribblerig/PRD.md)
 
