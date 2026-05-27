@@ -13,8 +13,12 @@ export interface SessionMeta {
   updatedAt: number;
 }
 
-/** A short human label for a build, derived from its contents. */
+/** A short human label for a build. Prefers an explicit `scene.title`
+ *  (set by the share popover, or hard-coded into seed scenes like the
+ *  tutorial); falls back to a body-and-connector count when none is set. */
 export function deriveTitle(scene: Scene): string {
+  const explicit = scene.title?.trim();
+  if (explicit) return explicit;
   const room = scene.rooms[0];
   const n = room.bodies.length + room.connectors.length;
   return n === 0 ? "Empty build" : `${n} object${n === 1 ? "" : "s"}`;

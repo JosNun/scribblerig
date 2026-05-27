@@ -46,6 +46,15 @@ describe("share codec", () => {
     expect(decodeScene("not valid base64url !@#$%")).toBeNull();
     expect(decodeScene(encodeScene(sampleScene()).slice(0, 12))).toBeNull(); // truncated
   });
+
+  // The tutorial scene is a build-time constant authored in-app and pasted
+  // back as a Scene literal. If anyone edits the literal in a way the codec
+  // can't round-trip (an unknown prop, a malformed endpoint), this test
+  // catches it before a user runs into a busted Tutorial.
+  it("round-trips the tutorial scene without drift", async () => {
+    const { tutorialScene } = await import("./tutorialScene");
+    expect(decodeScene(encodeScene(tutorialScene))).toEqual(tutorialScene);
+  });
 });
 
 describe("sanitizeScene (tolerant import)", () => {

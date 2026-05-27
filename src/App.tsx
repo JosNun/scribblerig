@@ -36,6 +36,7 @@ import {
   loadSession,
   adoptSession,
   newSession,
+  newTutorialBuild,
   deleteSession,
   renameSession,
   loadThumbnail,
@@ -1900,6 +1901,16 @@ export default function App() {
     adoptScene(fresh.scene); // stays lazy (no bump) until the first edit
   };
 
+  /** "Show tutorial" — mint a fresh session seeded from the tutorial scene
+   *  constant. Same lifecycle as `+ New build` (lazy until first edit), so
+   *  the user can always summon a clean copy if they scribbled on the
+   *  previous one. */
+  const startTutorialBuild = () => {
+    const fresh = newTutorialBuild();
+    sessionIdRef.current = fresh.id;
+    adoptScene(fresh.scene);
+  };
+
   const removeBuild = (id: string) => {
     deleteSession(id);
     refreshBuilds();
@@ -2217,6 +2228,9 @@ export default function App() {
       <div className="builds-panel panel" onPointerDown={(e) => e.stopPropagation()}>
         <div className="builds-head">
           <span className="prop-title">Builds</span>
+          <button onClick={startTutorialBuild} title="Open a fresh tutorial">
+            Show tutorial
+          </button>
           <button onClick={startNewBuild}>+ New build</button>
         </div>
         {builds.length === 0 ? (

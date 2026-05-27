@@ -14,6 +14,18 @@ describe("deriveTitle", () => {
     const two = addBody(one, 0, makeBody("ball", { x: 1, y: 1 })).scene;
     expect(deriveTitle(two)).toBe("2 objects");
   });
+
+  it("prefers an explicit scene.title when set, ignoring the count fallback", () => {
+    const named = { ...createScene(), title: "Tutorial" };
+    expect(deriveTitle(named)).toBe("Tutorial");
+    const populated = addBody(named, 0, makeBody("ball", { x: 0, y: 1 })).scene;
+    expect(deriveTitle(populated)).toBe("Tutorial");
+  });
+
+  it("falls back to the count when scene.title is blank or whitespace", () => {
+    const blank = { ...createScene(), title: "   " };
+    expect(deriveTitle(blank)).toBe("Empty build");
+  });
 });
 
 describe("session index", () => {

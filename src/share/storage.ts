@@ -19,6 +19,7 @@ import {
   mostRecent,
 } from "./sessions";
 import { createScene, tracerScene, type Scene, type Body, type Connector } from "../scene/scene";
+import { tutorialScene } from "./tutorialScene";
 
 const SCENE_PREFIX = "scribblerig:scene:";
 const THUMB_PREFIX = "scribblerig:thumb:";
@@ -36,7 +37,11 @@ export interface SessionBoot {
  *  1. a shared URL fragment → a fresh (lazy) session;
  *  2. else this tab's own persisted session (stable reload);
  *  3. else resume the most-recent build's content under a fresh id — a *lazy
- *     fork* that only becomes a saved session once edited (see `saveSession`).
+ *     fork* that only becomes a saved session once edited (see `saveSession`);
+ *  4. else this is a first-ever visit: seed the tutorial scene as the
+ *     starting lazy fork (PRD: onboarding-tutorial). The check is "no
+ *     sessions in the index," not "no Tutorial in the index" — so deleting
+ *     the tutorial doesn't re-seed it next reload.
  */
 export function bootSession(): SessionBoot {
   migrateLegacy();
@@ -57,8 +62,24 @@ export function bootSession(): SessionBoot {
   }
 
   const id = ensureSid(existing ?? newId());
-  const recent = mostRecent(readIndex());
+  const idx = readIndex();
+  if (idx.length === 0) {
+    // First-ever visit — seed with the tutorial. Stays lazy (no save) until
+    // the user's first edit, same as any other lazy-fork starting scene.
+    return { id, scene: structuredClone(tutorialScene) };
+  }
+  const recent = mostRecent(idx);
   return { id, scene: (recent && readScene(recent.id)) || tracerScene() };
+}
+
+/**
+ * Mint a fresh build seeded from the tutorial scene constant. The Builds
+ * modal's "Show tutorial" button calls this so the user can always summon a
+ * clean copy, even if they scribbled on the previous one. Lazy until the
+ * first edit, same as `newSession()`.
+ */
+export function newTutorialBuild(): SessionBoot {
+  return { id: ensureSid(newId()), scene: structuredClone(tutorialScene) };
 }
 
 /**
