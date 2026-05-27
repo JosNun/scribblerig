@@ -77,6 +77,7 @@ import { createHistory } from "./history/history";
 import { BodyPreview } from "./ui/BodyPreview";
 import { ConnectorPreview } from "./ui/ConnectorPreview";
 import { DoodleBorder } from "./ui/DoodleBorder";
+import { DoodleUnderline } from "./ui/DoodleUnderline";
 import { DoodleTooltip, DoodleTooltipProvider } from "./ui/DoodleTooltip";
 import { Icon } from "./ui/Icon";
 import { PropertyPanel } from "./ui/PropertyPanel";
@@ -2228,14 +2229,14 @@ export default function App() {
       <div className="builds-panel panel" onPointerDown={(e) => e.stopPropagation()}>
         <div className="builds-head">
           <span className="prop-title">Builds</span>
-          <button
-            className="builds-show-tutorial"
-            onClick={startTutorialBuild}
-            title="Open a fresh tutorial"
-          >
+          <button onClick={startTutorialBuild} title="Open a fresh tutorial">
             Show tutorial
+            <DoodleUnderline />
           </button>
-          <button onClick={startNewBuild}>+ New build</button>
+          <button onClick={startNewBuild}>
+            + New build
+            <DoodleUnderline />
+          </button>
         </div>
         {builds.length === 0 ? (
           <div className="prop-empty">No saved builds yet.</div>

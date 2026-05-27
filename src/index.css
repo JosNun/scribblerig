@@ -795,13 +795,25 @@ button > span:not(.doodle-border__anchor),
   gap: 12px;
 }
 
-/* The "Show tutorial" button sits in the head as a text affordance — the
- * underline on hover signals "this is clickable" without the heavier button
- * chrome that would crowd the heading. */
-.builds-show-tutorial:hover,
-.builds-show-tutorial:focus-visible {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+/* Hand-drawn underline for text-style buttons (the Builds modal head, where
+ * the heavier doodle-border chrome would crowd the heading). Hidden by
+ * default; shown on :hover / :focus-visible. Parent must be position:
+ * relative — `.panel button` already is. */
+.doodle-underline__anchor {
+  display: none;
+}
+.doodle-underline {
+  position: absolute;
+  bottom: 4px;
+  left: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+*:hover > .doodle-underline,
+*:focus-visible > .doodle-underline {
+  opacity: 1;
 }
 
 .builds-list {
