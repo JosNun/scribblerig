@@ -760,3 +760,156 @@ describe("text bodies (PRD: text-object)", () => {
     world.free();
   });
 });
+
+// PRD: despawn-out-of-bounds. Cull dynamic bodies whose live position has
+// escaped the room AABB by their margin. Tight margin (2 m) for ephemerals so
+// a spawner's maxAlive slot frees up promptly; generous margin (50 m) for
+// design bodies so deliberate ballistics don't get clipped. Static design
+// bodies are exempt — they don't move under physics.
+describe("out-of-bounds cull (PRD: despawn-out-of-bounds)", () => {
+  // Room defaults to 12×12 with x in [-6, 6] and y in [0, 12]. Design margin
+  // (50 m) triggers at |x| > 56 or y > 62 / y < -50. Ephemeral margin (2 m)
+  // triggers at |x| > 8 or y > 14 / y < -2.
+  it("culls a dynamic design body once it crosses the 50 m design margin", () => {
+    let s = updateRoomSettings(createScene(), 0, {
+      walls: { floor: false, ceiling: false, left: false, right: false },
+      // Zero gravity so the ball stays put — it's already past the margin
+      // on compile; the cull should fire on the very first step.
+      gravity: { x: 0, y: 0 },
+    });
+    const ball = addBody(s, 0, { ...makeBody("ball", { x: 80, y: 6 }) });
+    s = ball.scene;
+    const world = compile(s);
+    expect(world.readTransforms().has(ball.id)).toBe(true);
+    world.step();
+    expect(world.readTransforms().has(ball.id)).toBe(false);
+    world.free();
+  });
+
+  it("exempts static design bodies from culling", () => {
+    let s = updateRoomSettings(createScene(), 0, {
+      walls: { floor: false, ceiling: false, left: false, right: false },
+      gravity: { x: 0, y: 0 },
+    });
+    // A static platform authored far outside should stay put forever.
+    const plat = addBody(s, 0, {
+      ...makeBody("platform", { x: 80, y: 6 }),
+      props: { width: 1, height: 0.2, static: true },
+    });
+    s = plat.scene;
+    const world = compile(s);
+    for (let i = 0; i < 30; i++) world.step();
+    expect(world.readTransforms().has(plat.id)).toBe(true);
+    expect(world.readTransforms().get(plat.id)!.position.x).toBeCloseTo(80, 5);
+    world.free();
+  });
+
+  it("drops a joint touching a culled host (no crash, no live joint left)", () => {
+    let s = updateRoomSettings(createScene(), 0, {
+      walls: { floor: false, ceiling: false, left: false, right: false },
+      gravity: { x: 0, y: 0 },
+    });
+    // Two pinned balls: one inside, one well past the design cull margin.
+    // After cull, the inside ball survives, the outside ball is gone, and
+    // the pin joint between them is silently dropped.
+    const inside = addBody(s, 0, { ...makeBody("ball", { x: 0, y: 6 }) });
+    s = inside.scene;
+    const outside = addBody(s, 0, { ...makeBody("ball", { x: 80, y: 6 }) });
+    s = outside.scene;
+    const motor = addConnector(s, 0, {
+      type: "motor",
+      a: { body: inside.id, local: { x: 0, y: 0 } },
+      b: { body: outside.id, local: { x: 0, y: 0 } },
+      props: { speed: 3, torque: 1 },
+    });
+    s = motor.scene;
+    const world = compile(s);
+    world.step();
+    expect(world.readTransforms().has(outside.id)).toBe(false);
+    expect(world.readTransforms().has(inside.id)).toBe(true);
+    // Setting motor speed after the cull should be a silent no-op, not a
+    // crash from dereferencing the freed Rapier joint.
+    expect(() => world.setMotor(motor.id, { speed: 10, torque: 1 })).not.toThrow();
+    // And the world should still step cleanly.
+    expect(() => {
+      for (let i = 0; i < 10; i++) world.step();
+    }).not.toThrow();
+    world.free();
+  });
+
+  it("culls ephemerals past the 2 m margin so the spawner can keep emitting", () => {
+    // Spawner inside, aimed right with enough speed that emitted balls
+    // escape the 2 m ephemeral margin within a second. Under the *old*
+    // behaviour, items off-screen but still alive would occupy the spawner's
+    // maxAlive slots and stall emission; with the cull, alive count stays
+    // small and the spawner keeps producing fresh ids.
+    let s = updateRoomSettings(createScene(), 0, {
+      walls: { floor: false, ceiling: false, left: false, right: false },
+      gravity: { x: 0, y: 0 },
+    });
+    const sp = addBody(s, 0, {
+      type: "spawner",
+      position: { x: 0, y: 6 },
+      rotation: 0,
+      props: { interval: 0.5, maxAlive: 20, speed: 10, static: true },
+      template: {
+        bodies: [
+          {
+            id: "tb1",
+            type: "ball",
+            position: { x: 0, y: 0 },
+            rotation: 0,
+            props: { radius: 0.2, density: 1 },
+          },
+        ],
+        connectors: [],
+      },
+    });
+    s = sp.scene;
+    const world = compile(s);
+    const seenSeqs = new Set<string>();
+    // Step 10 seconds (600 steps). The first emit lands at T = 1.0 s
+    // (warmup), then every 0.5 s after — ~19 emits total. Each item flies
+    // right at 10 m/s and crosses x = 8 about 0.76 s after emit. Without
+    // the cull, all 19 would still be "alive"; with it, alive count stays
+    // ≤ 2 (the ones currently in flight) and seq ids keep advancing.
+    for (let i = 0; i < 600; i++) {
+      world.step();
+      for (const b of world.readEphemerals().bodies) seenSeqs.add(b.id);
+    }
+    expect(world.readEphemerals().bodies.length).toBeLessThanOrEqual(2);
+    // At least 10 distinct seq ids should have appeared — proves the
+    // spawner kept emitting, not stalled by off-screen "alive" items.
+    expect(seenSeqs.size).toBeGreaterThanOrEqual(10);
+    world.free();
+  });
+
+  it("culls a spawner authored past the design margin (no emissions, no crash)", () => {
+    let s = updateRoomSettings(createScene(), 0, {
+      walls: { floor: false, ceiling: false, left: false, right: false },
+      gravity: { x: 0, y: 0 },
+    });
+    const sp = addBody(s, 0, {
+      type: "spawner",
+      // Past the design cull margin (x > 56) — gets removed on the first step
+      // before its warmup timer ever fires.
+      position: { x: 80, y: 6 },
+      rotation: 0,
+      props: { interval: 0.2, maxAlive: 5, speed: 0, static: false },
+      template: {
+        bodies: [
+          { id: "tb1", type: "ball", position: { x: 0, y: 0 }, rotation: 0, props: { radius: 0.2 } },
+        ],
+        connectors: [],
+      },
+    });
+    s = sp.scene;
+    const world = compile(s);
+    // Many steps — should never crash from stepping a culled spawner, and
+    // no ephemerals should ever appear.
+    for (let i = 0; i < 120; i++) world.step();
+    expect(world.readTransforms().has(sp.id)).toBe(false);
+    expect(world.readEphemerals().bodies).toHaveLength(0);
+    world.free();
+  });
+});

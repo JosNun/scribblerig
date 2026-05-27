@@ -31,6 +31,17 @@ const FIXED_DT = 1 / 60;
 const WALL_THICKNESS = 0.5;
 
 /**
+ * Cull margins (PRD: despawn-out-of-bounds). A body whose live position is
+ * farther past the room AABB than its margin gets removed at the end of the
+ * step. Tight for ephemerals so a spawner's maxAlive slot frees up promptly;
+ * generous for design bodies so a deliberate ballistics arc or long pendulum
+ * isn't culled mid-oscillation — but a true runaway is still cleaned up.
+ * Static design bodies are exempt (they don't move under physics).
+ */
+const EPHEMERAL_CULL_MARGIN_M = 2;
+const DESIGN_CULL_MARGIN_M = 50;
+
+/**
  * Collision groups for the spawner / emitted-item ignore-self rule (issue 19).
  *
  * Rapier interaction groups encode `(memberships << 16) | filter` as a u32.
@@ -176,12 +187,35 @@ export function compile(scene: Scene): SimWorld {
   );
 
   // Connectors compile to joints, in array order, after all bodies exist.
-  // Keep the joints by connector id so motors can be re-tuned live.
+  // Keep the joints by connector id so motors can be re-tuned live, and a
+  // side index of which design bodies each joint depends on so `cullEscapees`
+  // can prune stale entries without dereferencing a freed Rapier joint.
   const joints = new Map<string, RAPIER.ImpulseJoint>();
+  const jointBodyIds = new Map<string, string[]>();
   for (const conn of room.connectors) {
     const joint = compileConnector(world, conn, placements);
-    if (joint) joints.set(conn.id, joint);
+    if (!joint) continue;
+    joints.set(conn.id, joint);
+    const ids: string[] = [];
+    if (isBodyEndpoint(conn.a)) ids.push(conn.a.body);
+    if (isBodyEndpoint(conn.b)) ids.push(conn.b.body);
+    jointBodyIds.set(conn.id, ids);
   }
+
+  // Cull bounds derived from the room. Buildings use the *interior* extent:
+  // x in [-W/2, W/2], y in [0, H]. Margins apply outward from these edges.
+  const halfW = room.settings.size.width / 2;
+  const roomAabb: AABB = {
+    minX: -halfW,
+    maxX: halfW,
+    minY: 0,
+    maxY: room.settings.size.height,
+  };
+
+  // Alive items whose owning spawner has been culled. They keep stepping and
+  // rendering through `readEphemerals` until they themselves cross the
+  // ephemeral cull margin (PRD: despawn-out-of-bounds).
+  const orphanItems: AliveItem[] = [];
 
   const spawners: SpawnerRuntime[] = room.bodies
     .filter((b) => b.type === "spawner")
@@ -205,6 +239,7 @@ export function compile(scene: Scene): SimWorld {
     step: () => {
       world.step();
       for (const sp of spawners) stepSpawner(world, sp);
+      cullEscapees(world, roomAabb, placements, joints, jointBodyIds, spawners, orphanItems);
     },
     readTransforms: () => {
       const out = new Map<string, BodyTransform>();
@@ -214,7 +249,7 @@ export function compile(scene: Scene): SimWorld {
       for (const [id, t] of staticVisualTransforms) out.set(id, t);
       return out;
     },
-    readEphemerals: () => collectEphemerals(spawners),
+    readEphemerals: () => collectEphemerals(spawners, orphanItems),
     setMotor: (connectorId, props) => {
       const joint = joints.get(connectorId);
       if (joint && joint.type() === R!.JointType.Revolute) {
@@ -761,32 +796,156 @@ function emitItem(
   };
 }
 
-/** Flatten every alive item into a single frame for the renderer to draw. */
-function collectEphemerals(spawners: SpawnerRuntime[]): EphemeralFrame {
+/** Flatten every alive item into a single frame for the renderer to draw.
+ *  Walks both per-spawner alive lists and the orphan pool (alive items whose
+ *  spawner has been culled but who still survive the ephemeral cull margin). */
+function collectEphemerals(
+  spawners: SpawnerRuntime[],
+  orphans: AliveItem[],
+): EphemeralFrame {
   const bodies: EphemeralBody[] = [];
   const connectors: EphemeralConnector[] = [];
-  for (const sp of spawners) {
-    // Re-read the live placement each tick — these are the freshly-stepped
-    // transforms, not the emit-time snapshot.
-    for (const item of sp.alive) {
-      // Placements were cached on the AliveItem at emit time — the per-body
-      // local offset within the compound rb is geometrically static, only
-      // the rb's *world* transform changes per frame. expandTransform reads
-      // the live rb pose each call.
-      for (const b of item.bodies) {
-        const pl = item.placements.get(b.id);
-        if (!pl) continue;
-        bodies.push({
-          id: b.id,
-          type: b.type,
-          props: b.props as Props,
-          transform: expandTransform(pl),
-        });
-      }
-      for (const c of item.connectors) {
-        connectors.push({ type: c.type, props: c.props as Props, a: c.a, b: c.b });
-      }
+  // Re-read the live placement each tick — these are the freshly-stepped
+  // transforms, not the emit-time snapshot. Placements were cached on the
+  // AliveItem at emit time because the per-body local offset within the
+  // compound rb is geometrically static; only the rb's *world* transform
+  // changes per frame, and expandTransform reads the live rb pose each call.
+  const pushItem = (item: AliveItem): void => {
+    for (const b of item.bodies) {
+      const pl = item.placements.get(b.id);
+      if (!pl) continue;
+      bodies.push({
+        id: b.id,
+        type: b.type,
+        props: b.props as Props,
+        transform: expandTransform(pl),
+      });
+    }
+    for (const c of item.connectors) {
+      connectors.push({ type: c.type, props: c.props as Props, a: c.a, b: c.b });
+    }
+  };
+  for (const sp of spawners) for (const item of sp.alive) pushItem(item);
+  for (const item of orphans) pushItem(item);
+  return { bodies, connectors };
+}
+
+// ----- out-of-bounds cull (PRD: despawn-out-of-bounds) -----
+
+/** Axis-aligned room interior in world meters. Cull margins extend outward. */
+interface AABB {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+function outsideAabb(p: { x: number; y: number }, aabb: AABB, margin: number): boolean {
+  return (
+    p.x < aabb.minX - margin ||
+    p.x > aabb.maxX + margin ||
+    p.y < aabb.minY - margin ||
+    p.y > aabb.maxY + margin
+  );
+}
+
+/** An alive item is "out" if **any** of its distinct rigid bodies escaped the
+ *  margin. Multi-body items (welded together or pin/spring-joined within an
+ *  emission) cull as a unit — once one piece is lost, the rest goes too. */
+function itemOutside(item: AliveItem, aabb: AABB, margin: number): boolean {
+  for (const rb of item.rbs) {
+    if (outsideAabb(rb.translation(), aabb, margin)) return true;
+  }
+  return false;
+}
+
+/**
+ * Cull bodies whose live position has escaped the room by their margin. Runs
+ * once per `step()` after the spawner emit loop, so the next render frame
+ * already reflects the cull.
+ *
+ * Design bodies cull at compound granularity — welded members share one rigid
+ * body, so if any member escapes, all members of the compound go together
+ * (Rapier cascades the joints and colliders when the rb is freed). Static
+ * compounds are exempt; they don't move under physics, and culling them would
+ * only fire from a glitch.
+ *
+ * When a culled compound contains a spawner, that spawner's alive emissions
+ * transfer to the orphan pool — they keep stepping and rendering until they
+ * themselves escape the ephemeral margin. The spawner stops emitting; the
+ * items it already loosed live out their natural arcs.
+ *
+ * Joint map entries touching a culled body are dropped from the `joints`
+ * lookup so `setMotor` doesn't try to drive a freed Rapier joint.
+ */
+function cullEscapees(
+  world: RAPIER.World,
+  aabb: AABB,
+  placements: Map<string, Placement>,
+  joints: Map<string, RAPIER.ImpulseJoint>,
+  jointBodyIds: Map<string, string[]>,
+  spawners: SpawnerRuntime[],
+  orphanItems: AliveItem[],
+): void {
+  // 1) Design bodies — visit each unique dynamic rb once.
+  const seenRbs = new Set<RAPIER.RigidBody>();
+  const rbsToCull: RAPIER.RigidBody[] = [];
+  for (const pl of placements.values()) {
+    if (seenRbs.has(pl.rb)) continue;
+    seenRbs.add(pl.rb);
+    if (pl.rb.isFixed()) continue;
+    if (outsideAabb(pl.rb.translation(), aabb, DESIGN_CULL_MARGIN_M)) {
+      rbsToCull.push(pl.rb);
     }
   }
-  return { bodies, connectors };
+
+  if (rbsToCull.length > 0) {
+    const rbSet = new Set(rbsToCull);
+
+    const bodiesToCull = new Set<string>();
+    for (const [id, pl] of placements) {
+      if (rbSet.has(pl.rb)) bodiesToCull.add(id);
+    }
+
+    // Transfer any escaping spawner's alive items into the orphan pool, and
+    // drop the spawner runtime so it stops stepping. Iterate in reverse so
+    // splicing doesn't shift the indices we still need to visit.
+    for (let i = spawners.length - 1; i >= 0; i--) {
+      if (rbSet.has(spawners[i].placement.rb)) {
+        orphanItems.push(...spawners[i].alive);
+        spawners.splice(i, 1);
+      }
+    }
+
+    // Drop joint map entries touching a culled body. Rapier frees the
+    // underlying joint when its rb is removed; we just need to keep the
+    // lookup map honest.
+    for (const [cid, bodyIds] of jointBodyIds) {
+      if (bodyIds.some((bid) => bodiesToCull.has(bid))) {
+        joints.delete(cid);
+        jointBodyIds.delete(cid);
+      }
+    }
+
+    for (const id of bodiesToCull) placements.delete(id);
+    for (const rb of rbsToCull) world.removeRigidBody(rb);
+  }
+
+  // 2) Ephemerals — per-spawner alive lists, then the orphan pool.
+  for (const sp of spawners) {
+    if (sp.alive.length === 0) continue;
+    sp.alive = sp.alive.filter((item) => {
+      if (itemOutside(item, aabb, EPHEMERAL_CULL_MARGIN_M)) {
+        despawnItem(world, item);
+        return false;
+      }
+      return true;
+    });
+  }
+  for (let i = orphanItems.length - 1; i >= 0; i--) {
+    if (itemOutside(orphanItems[i], aabb, EPHEMERAL_CULL_MARGIN_M)) {
+      despawnItem(world, orphanItems[i]);
+      orphanItems.splice(i, 1);
+    }
+  }
 }
