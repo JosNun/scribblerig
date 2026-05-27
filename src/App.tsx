@@ -2228,7 +2228,11 @@ export default function App() {
       <div className="builds-panel panel" onPointerDown={(e) => e.stopPropagation()}>
         <div className="builds-head">
           <span className="prop-title">Builds</span>
-          <button onClick={startTutorialBuild} title="Open a fresh tutorial">
+          <button
+            className="builds-show-tutorial"
+            onClick={startTutorialBuild}
+            title="Open a fresh tutorial"
+          >
             Show tutorial
           </button>
           <button onClick={startNewBuild}>+ New build</button>

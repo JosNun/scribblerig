@@ -795,6 +795,15 @@ button > span:not(.doodle-border__anchor),
   gap: 12px;
 }
 
+/* The "Show tutorial" button sits in the head as a text affordance — the
+ * underline on hover signals "this is clickable" without the heavier button
+ * chrome that would crowd the heading. */
+.builds-show-tutorial:hover,
+.builds-show-tutorial:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .builds-list {
   list-style: none;
   margin: 0;
