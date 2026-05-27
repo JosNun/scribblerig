@@ -18,7 +18,7 @@ import {
   sortByRecent,
   mostRecent,
 } from "./sessions";
-import { createScene, tracerScene, type Scene, type Body } from "../scene/scene";
+import { createScene, tracerScene, type Scene, type Body, type Connector } from "../scene/scene";
 
 const SCENE_PREFIX = "scribblerig:scene:";
 const THUMB_PREFIX = "scribblerig:thumb:";
@@ -207,20 +207,26 @@ export function encodedLength(scene: Scene): number {
 const SHARE_PARAM = "s";
 
 /**
- * Share text carrying a single body, written to the system clipboard on copy so
- * a duplicate can be pasted in another tab or app (issue 17). Reuses the scene
- * codec — the body rides inside an otherwise-empty scene.
+ * Share text carrying a subgraph (one or more bodies + the connectors among
+ * them), written to the system clipboard on copy so the same selection can be
+ * pasted in another tab or app (issue 17, extended for multi-select). Reuses
+ * the scene codec — the subgraph rides inside an otherwise-empty scene.
  */
-export function bodyToShareText(body: Body): string {
+export function subgraphToShareText(subgraph: { bodies: Body[]; connectors: Connector[] }): string {
   const scene = createScene();
-  scene.rooms[0].bodies = [body];
+  scene.rooms[0].bodies = subgraph.bodies;
+  scene.rooms[0].connectors = subgraph.connectors;
   return encodeScene(scene);
 }
 
-/** Recover a single body from share text written by {@link bodyToShareText}. */
-export function bodyFromShareText(text: string): Body | null {
+/** Recover a subgraph from share text written by {@link subgraphToShareText}.
+ *  Returns null if nothing decodable was found. */
+export function subgraphFromShareText(text: string): { bodies: Body[]; connectors: Connector[] } | null {
   const scene = decodeScene(text);
-  return scene?.rooms[0]?.bodies[0] ?? null;
+  if (!scene) return null;
+  const room = scene.rooms[0];
+  if (!room || room.bodies.length === 0) return null;
+  return { bodies: room.bodies, connectors: room.connectors };
 }
 
 // ----- internals -----

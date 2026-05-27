@@ -15,7 +15,7 @@ import { isBodyEndpoint } from "../scene/scene";
 import type { BodyTransform, EphemeralFrame } from "../sim/sim";
 import { def, connectorDef, type Props, type Shape } from "../registry/registry";
 import { textBoundsLocal, textLines, textSizeMeters } from "../registry/text-bounds";
-import { bodyHandles, bodyToWorld } from "../editor/editor";
+import { bodyHandles, bodyToWorld, groupAABB, GROUP_ROTATE_GAP } from "../editor/editor";
 import { type Camera, worldToScreen, screenToWorld } from "./camera";
 
 /** Transient draw-time overlay for the connector-draw interaction. */
@@ -27,6 +27,9 @@ export interface DrawOverlay {
   /** Translucent body silhouette at the cursor, e.g. for the popover's
    *  drag-from-palette preview. Drawn at default props for the given type. */
   ghost?: { type: BodyType; position: Vec2 };
+  /** Marquee selection rectangle (world-space corners) while the user is
+   *  click-dragging on empty canvas. Drawn as a dashed outline. */
+  marquee?: { a: Vec2; b: Vec2 };
 }
 
 const WALL_THICKNESS = 0.5; // meters; mirrors the floor collider in sim
@@ -89,6 +92,9 @@ export interface Renderer {
      */
     ephemerals?: EphemeralFrame,
     deleteFade?: DeleteFade | null,
+    /** Body ids in the active multi-selection — each gets a dashed outline
+     *  (but no resize/rotate handles, since those don't apply to a group). */
+    multiSelectedIds?: ReadonlySet<string>,
   ): void;
   /** Swap the camera (e.g. on window resize). Invalidates the drawable cache. */
   setCamera(camera: Camera): void;
@@ -128,7 +134,7 @@ export function createRenderer(
       cam = next;
       cache.clear();
     },
-    draw(scene, transforms, selectedId, overlay, ephemerals, deleteFade) {
+    draw(scene, transforms, selectedId, overlay, ephemerals, deleteFade, multiSelectedIds) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const room = scene.rooms[0];
 
@@ -138,8 +144,12 @@ export function createRenderer(
         drawWalls(room.settings.walls, room.settings.size);
       }
 
-      // Connectors under the bodies they join.
-      for (const conn of room.connectors) drawConnector(conn, transforms, conn.id === selectedId);
+      // Connectors under the bodies they join. A connector picks up the
+      // selection highlight from either the single-select or the active group.
+      for (const conn of room.connectors) {
+        const sel = conn.id === selectedId || (multiSelectedIds?.has(conn.id) ?? false);
+        drawConnector(conn, transforms, sel);
+      }
 
       const fadingId = deleteFade && deleteFade.progress > 0 ? deleteFade.id : null;
       for (const body of room.bodies) {
@@ -156,6 +166,39 @@ export function createRenderer(
         if (body.id === selectedId) {
           drawSelection(body, t);
           drawHandles(body, t);
+        } else if (multiSelectedIds && multiSelectedIds.has(body.id)) {
+          // Group selection: each member gets the same dashed outline, but no
+          // resize/rotate handles — those operate on a single body's local
+          // frame, which isn't meaningful for a multi-body group.
+          drawSelection(body, t);
+        }
+      }
+
+      // Group rotation handle — one per active multi-selection, anchored above
+      // the live AABB. The pointer layer hit-tests it and rotates every member
+      // (bodies' positions + rotations; world endpoints) around the AABB
+      // center captured at gesture start.
+      if (multiSelectedIds && multiSelectedIds.size > 0) {
+        const aabb = groupAABB(scene, 0, multiSelectedIds);
+        if (aabb) {
+          const cx = (aabb.min.x + aabb.max.x) / 2;
+          const topAnchor = worldToScreen(cam, { x: cx, y: aabb.max.y });
+          const handle = worldToScreen(cam, { x: cx, y: aabb.max.y + GROUP_ROTATE_GAP });
+          ctx.save();
+          ctx.strokeStyle = SELECT_COLOR;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(topAnchor.x, topAnchor.y);
+          ctx.lineTo(handle.x, handle.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.arc(handle.x, handle.y, 5, 0, Math.PI * 2);
+          ctx.fillStyle = SELECT_COLOR;
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
         }
       }
 
@@ -278,6 +321,21 @@ export function createRenderer(
       ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+    }
+    if (overlay.marquee) {
+      const pa = worldToScreen(cam, overlay.marquee.a);
+      const pb = worldToScreen(cam, overlay.marquee.b);
+      const x = Math.min(pa.x, pb.x);
+      const y = Math.min(pa.y, pb.y);
+      const w = Math.abs(pb.x - pa.x);
+      const h = Math.abs(pb.y - pa.y);
+      ctx.strokeStyle = SELECT_COLOR;
+      ctx.fillStyle = "rgba(31,122,61,0.08)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+      ctx.setLineDash([]);
     }
     ctx.restore();
   }

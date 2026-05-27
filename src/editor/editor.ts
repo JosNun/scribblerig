@@ -135,6 +135,11 @@ export interface Handle {
 /** Gap (meters) between a body's top edge and its rotation handle. */
 const ROTATE_GAP = 0.8;
 
+/** Gap (meters) from the group's AABB top to the multi-selection rotation
+ *  handle. Exported so the renderer (draws it) and the pointer layer (hit-
+ *  tests it) stay in agreement on placement. */
+export const GROUP_ROTATE_GAP = 0.8;
+
 /** Bounding half-extents of a body's collision shapes, in local meters. */
 function halfExtents(body: Body): { hw: number; hh: number } {
   // Text has no collider; use the measured text bbox so clamping / handle
@@ -155,6 +160,72 @@ function halfExtents(body: Body): { hw: number; hh: number } {
     }
   }
   return { hw, hh };
+}
+
+/**
+ * World-space axis-aligned bounding box for a body — its rotated local
+ * half-extents projected onto the world axes, plus its position. Used by
+ * marquee selection: a body is "in" the marquee when its AABB overlaps the
+ * marquee rect.
+ */
+export function bodyAABB(body: Body): { min: Vec2; max: Vec2 } {
+  const { hw, hh } = halfExtents(body);
+  const c = Math.abs(Math.cos(body.rotation));
+  const s = Math.abs(Math.sin(body.rotation));
+  const ax = hw * c + hh * s;
+  const ay = hw * s + hh * c;
+  return {
+    min: { x: body.position.x - ax, y: body.position.y - ay },
+    max: { x: body.position.x + ax, y: body.position.y + ay },
+  };
+}
+
+/** Standard AABB-vs-AABB overlap (intersect semantics — any touch counts). */
+export function rectsOverlap(
+  a: { min: Vec2; max: Vec2 },
+  b: { min: Vec2; max: Vec2 },
+): boolean {
+  return a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y;
+}
+
+/**
+ * Union AABB of a multi-selection — every member body's AABB plus every
+ * member connector's endpoint world position folded in. The renderer uses
+ * this to position the group rotation handle, and the pointer layer uses it
+ * to hit-test the handle. Returns null if the selection is empty.
+ */
+export function groupAABB(
+  scene: Scene,
+  roomIndex: number,
+  ids: ReadonlySet<string>,
+): { min: Vec2; max: Vec2 } | null {
+  const room = scene.rooms[roomIndex];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let any = false;
+  for (const id of ids) {
+    const body = room.bodies.find((b) => b.id === id);
+    if (body) {
+      const a = bodyAABB(body);
+      if (a.min.x < minX) minX = a.min.x;
+      if (a.min.y < minY) minY = a.min.y;
+      if (a.max.x > maxX) maxX = a.max.x;
+      if (a.max.y > maxY) maxY = a.max.y;
+      any = true;
+      continue;
+    }
+    const conn = room.connectors.find((c) => c.id === id);
+    if (!conn) continue;
+    for (const ep of [conn.a, conn.b]) {
+      const w = endpointWorld(scene, roomIndex, ep);
+      if (!w) continue;
+      if (w.x < minX) minX = w.x;
+      if (w.y < minY) minY = w.y;
+      if (w.x > maxX) maxX = w.x;
+      if (w.y > maxY) maxY = w.y;
+      any = true;
+    }
+  }
+  return any ? { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } } : null;
 }
 
 function isCircle(body: Body): boolean {

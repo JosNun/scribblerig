@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Drawer } from "vaul";
 import {
   addBody,
-  cloneBodyInto,
+  cloneItem,
   updateBody,
   duplicateBody,
   updateRoomSettings,
@@ -19,6 +19,7 @@ import {
   isBodyEndpoint,
   type Scene,
   type Body,
+  type Connector,
   type Vec2,
   type BodyType,
   type ConnectorType,
@@ -29,8 +30,8 @@ import {
   hasSharedScene,
   saveSession,
   strippedUrl,
-  bodyToShareText,
-  bodyFromShareText,
+  subgraphToShareText,
+  subgraphFromShareText,
   listSessions,
   loadSession,
   adoptSession,
@@ -64,6 +65,10 @@ import {
   applyRotation,
   clampInsideRoom,
   pruneDetachedConnectors,
+  bodyAABB,
+  rectsOverlap,
+  groupAABB,
+  GROUP_ROTATE_GAP,
   type HandleId,
 } from "./editor/editor";
 import { snap as snapEndpoint, endpointOf, type SnapResult } from "./snapping/snapping";
@@ -173,13 +178,57 @@ export default function App() {
   const historyRef = useRef(createHistory());
   const gestureStartRef = useRef<Scene | null>(null);
   const selectedRef = useRef<string | null>(null);
+  // Multi-selection: the set of body ids in the active group. Built by
+  // marquee-dragging on empty canvas (or shift-clicking individual bodies),
+  // and operated on as a single unit by drag/Delete/Escape. Disjoint from
+  // `selectedRef` — when this is non-empty, the single-selection chrome is
+  // suppressed (we don't show resize/rotate handles on a group). Stays a
+  // body-only feature; multi-select of connectors isn't supported.
+  const multiSelectionRef = useRef<Set<string>>(new Set());
+  // Active marquee gesture, if any. `start` is captured on pointerdown over
+  // empty canvas; `current` updates on pointermove; on pointerup we compute
+  // which bodies the rect intersects and finalize. `additive` is set when
+  // the gesture began with Shift held.
+  const marqueeRef = useRef<{ start: Vec2; current: Vec2; additive: boolean } | null>(null);
+  // Active multi-drag: the world-space pointer position at the start, plus
+  // each selected body's starting position and each selected connector's
+  // world-anchored endpoint(s). Pointermove applies the same delta to all of
+  // them so the whole group translates as a unit. Body-anchored connector
+  // endpoints follow their bodies automatically; only world anchors need
+  // explicit translation.
+  const multiDragRef = useRef<
+    | {
+        start: Vec2;
+        positions: Map<string, Vec2>;
+        endpoints: Array<{ id: string; end: "a" | "b"; world: Vec2 }>;
+      }
+    | null
+  >(null);
+  // Active group rotation. Pivot is the group AABB center captured once at
+  // gesture start so the rotation axis doesn't drift as the AABB recomputes
+  // mid-rotation. Each member body's starting pose + each selected world
+  // endpoint's starting world point are captured so pointermove can rotate
+  // them around the frozen pivot.
+  const groupRotateRef = useRef<
+    | {
+        pivot: Vec2;
+        startAngle: number;
+        bodies: Array<{ id: string; pos: Vec2; rot: number }>;
+        endpoints: Array<{ id: string; end: "a" | "b"; world: Vec2 }>;
+      }
+    | null
+  >(null);
   // Copy/paste/duplicate (issue 17). The in-app clipboard is a deep body
   // snapshot — the permission-free primary source for paste; copy also writes
   // share text to the system clipboard for cross-tab/external paste. The hover
   // ref is the last world point under the cursor while over the canvas (null
   // when off it), so paste can land at the pointer. The cascade counter steps
   // successive off-pointer pastes/duplicates so they don't stack exactly.
-  const clipboardRef = useRef<Body | null>(null);
+  // Subgraph clipboard — bodies + the connectors among them. A single-body
+  // copy reduces to a 1-body / 0-connector subgraph; a multi-selection copy
+  // pulls in selected bodies plus any selected connectors. cloneItem on
+  // paste deep-copies through the same path either way.
+  const clipboardRef = useRef<{ bodies: Body[]; connectors: Connector[] } | null>(null);
   const hoverWorldRef = useRef<Vec2 | null>(null);
   const cascadeRef = useRef(0);
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
@@ -242,6 +291,10 @@ export default function App() {
   const [simReady, setSimReady] = useState(false);
   const [state, setState] = useState<ClockState>("build");
   const [selected, setSelected] = useState<string | null>(null);
+  // Reactive shadow of `multiSelectionRef` so React re-renders (and the
+  // toolbar / property panel can branch on group-vs-single) when the group
+  // membership changes. Kept in sync via `setMultiSelection` below.
+  const [multiSelection, setMultiSelectionState] = useState<ReadonlySet<string>>(new Set());
   const [connectorTool, setConnectorTool] = useState<ConnectorType | null>(null);
   const [ghost, setGhost] = useState<{ type: BodyType; x: number; y: number; droppable: boolean } | null>(null);
   // Hide the spawner popover transiently while the user drags/rotates the
@@ -490,6 +543,7 @@ export default function App() {
           isBuild ? (overlayRef.current ?? undefined) : undefined,
           ephemerals,
           deleteFade,
+          isBuild ? multiSelectionRef.current : undefined,
         );
         raf = requestAnimationFrame(frame);
       };
@@ -530,11 +584,13 @@ export default function App() {
         // Connector tool wins if armed; otherwise Esc is the explicit
         // deselect gesture (empty-canvas tap no longer clears selection,
         // so users need a way back to "nothing selected" — e.g. to reach
-        // the Room Settings panel).
+        // the Room Settings panel). Multi-selection drops first if active.
         if (connectorToolRef.current) {
           cancelConnectorRef.current();
         } else if (selectedRef.current) {
           select(null);
+        } else if (multiSelectionRef.current.size > 0) {
+          clearMultiSelection();
         }
       } else if (typing) {
         return; // editing a property value — leave all other shortcuts inert
@@ -596,9 +652,24 @@ export default function App() {
   };
 
   // ----- selection / editing -----
+  /** Update the multi-selection set (ref + reactive shadow). A non-empty set
+   *  takes over from `selectedRef` — selection chrome shows group outlines,
+   *  no handles, and ops like Delete operate on the whole group. */
+  const setMultiSelection = (ids: ReadonlySet<string>) => {
+    multiSelectionRef.current = new Set(ids);
+    setMultiSelectionState(new Set(ids));
+  };
+  const clearMultiSelection = () => {
+    if (multiSelectionRef.current.size === 0) return;
+    multiSelectionRef.current = new Set();
+    setMultiSelectionState(new Set());
+  };
   const select = (id: string | null) => {
     selectedRef.current = id;
     setSelected(id);
+    // A single-select supersedes any active group. (Shift-click extends the
+    // group instead — handled in the pointer-down branch, not here.)
+    clearMultiSelection();
     // Any change to the main selection ends "I'm editing a template body" —
     // a non-spawner selection closes the popover entirely; re-selecting the
     // same spawner is an explicit "back to spawner" gesture.
@@ -690,6 +761,9 @@ export default function App() {
     endpointDragRef.current = null;
     dragOffsetRef.current = null;
     handleDragRef.current = null;
+    marqueeRef.current = null;
+    multiDragRef.current = null;
+    groupRotateRef.current = null;
     overlayRef.current = null;
     setDragOverPalette(false);
   };
@@ -739,6 +813,39 @@ export default function App() {
       overlayRef.current = { snap: connectorStartRef.current.world };
       capture(canvasRef.current, e.pointerId);
       return;
+    }
+
+    // Group rotation handle — visible only when a multi-selection is active.
+    // Pivot is locked at the AABB center captured *now*, so the rotation axis
+    // doesn't drift as bodies rotate (which changes the AABB).
+    if (multiSelectionRef.current.size > 0) {
+      const aabb = groupAABB(sceneRef.current, 0, multiSelectionRef.current);
+      if (aabb) {
+        const cx = (aabb.min.x + aabb.max.x) / 2;
+        const handleWorld = { x: cx, y: aabb.max.y + GROUP_ROTATE_GAP };
+        const tol = HANDLE_PX / cameraRef.current.scale;
+        if (Math.hypot(raw.x - handleWorld.x, raw.y - handleWorld.y) <= tol) {
+          const pivot = { x: cx, y: (aabb.min.y + aabb.max.y) / 2 };
+          const startAngle = Math.atan2(raw.y - pivot.y, raw.x - pivot.x);
+          const bodies: Array<{ id: string; pos: Vec2; rot: number }> = [];
+          const endpoints: Array<{ id: string; end: "a" | "b"; world: Vec2 }> = [];
+          const room = sceneRef.current.rooms[0];
+          for (const id of multiSelectionRef.current) {
+            const b = room.bodies.find((bb) => bb.id === id);
+            if (b) {
+              bodies.push({ id, pos: { ...b.position }, rot: b.rotation });
+              continue;
+            }
+            const c = room.connectors.find((cc) => cc.id === id);
+            if (!c) continue;
+            if (!isBodyEndpoint(c.a)) endpoints.push({ id: c.id, end: "a", world: { ...c.a.world } });
+            if (!isBodyEndpoint(c.b)) endpoints.push({ id: c.id, end: "b", world: { ...c.b.world } });
+          }
+          groupRotateRef.current = { pivot, startAngle, bodies, endpoints };
+          capture(canvasRef.current, e.pointerId);
+          return;
+        }
+      }
     }
 
     // A resize/rotate handle on the selected body takes priority.
@@ -796,16 +903,114 @@ export default function App() {
     // resolves to a deselect.
     const world = snapOn() ? snapToGrid(raw, GRID_SIZE) : raw;
     const tol = CONNECTOR_PX / cameraRef.current.scale;
+    const bodyPicks = bodiesAtPoint(sceneRef.current, 0, world);
     const picks = [
-      ...bodiesAtPoint(sceneRef.current, 0, world),
+      ...bodyPicks,
       ...connectorsAtPoint(sceneRef.current, 0, raw, tol),
     ];
     if (picks.length === 0) {
+      // Pointerdown on empty canvas. Two outcomes, decided at pointerup:
+      //   • no movement → empty-tap deselect (existing emptyTapDownRef path);
+      //   • any drag    → marquee selection (the marqueeRef is live and the
+      //                   render loop draws it as the user moves).
+      // Both fire from the same gesture; the pointerup branch picks one.
       emptyTapDownRef.current = { x: e.clientX, y: e.clientY };
+      marqueeRef.current = { start: raw, current: raw, additive: e.shiftKey };
+      capture(canvasRef.current, e.pointerId);
       return;
     }
     // Picked something — any pending empty-tap is no longer ambiguous.
     emptyTapDownRef.current = null;
+
+    // Shift-click on a body toggles its membership in the multi-selection.
+    // The current single-selection (if any) is folded in first, so the
+    // gesture reads as "start a group from what's already selected, then
+    // add this one." Connectors are body-only, so shift-clicking a
+    // connector falls through to ordinary single-select below.
+    if (e.shiftKey && bodyPicks.length > 0) {
+      const id = bodyPicks[0];
+      const next = new Set(multiSelectionRef.current);
+      if (selectedRef.current && bodyById(selectedRef.current)) next.add(selectedRef.current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      setMultiSelection(next);
+      // Group chrome supersedes the single-select handles.
+      selectedRef.current = null;
+      setSelected(null);
+      setTemplateSelected(null);
+      return;
+    }
+
+    // Clicking a member of the active group: drag the whole group together.
+    // Alt-drag duplicates the group first and drags the duplicates instead,
+    // mirroring the single-body Alt-drag behavior below.
+    if (
+      multiSelectionRef.current.size > 0 &&
+      bodyPicks.length > 0 &&
+      multiSelectionRef.current.has(bodyPicks[0])
+    ) {
+      let activeIds: ReadonlySet<string> = multiSelectionRef.current;
+      if (e.altKey) {
+        const snapshot = selectionSubgraph();
+        if (snapshot) {
+          // Clone in place — same positions, fresh ids — and switch the
+          // selection to the clones. The original sits where it was; the
+          // copies are what the user drags. The whole thing lands as one
+          // undo entry because `gestureStartRef` was captured at the top
+          // of pointerdown, before this branch.
+          let nextId = sceneRef.current.nextId;
+          const mintId = (kind: "b" | "c"): string => {
+            const out = `${kind}${nextId}`;
+            nextId += 1;
+            return out;
+          };
+          const cloned = cloneItem(snapshot, mintId);
+          const room0 = sceneRef.current.rooms[0];
+          sceneRef.current = {
+            ...sceneRef.current,
+            nextId,
+            rooms: [
+              {
+                ...room0,
+                bodies: [...room0.bodies, ...cloned.bodies],
+                connectors: [...room0.connectors, ...cloned.connectors],
+              },
+              ...sceneRef.current.rooms.slice(1),
+            ],
+          };
+          const newIds = new Set<string>();
+          for (const b of cloned.bodies) newIds.add(b.id);
+          for (const c of cloned.connectors) newIds.add(c.id);
+          setMultiSelection(newIds);
+          selectedRef.current = null;
+          setSelected(null);
+          setTemplateSelected(null);
+          bump();
+          activeIds = newIds;
+        }
+      }
+      // Capture each member's starting position / world endpoint(s) — for the
+      // originals (plain drag) or the clones (Alt-drag). Pointermove applies
+      // one delta to all of them without compounding drift.
+      const positions = new Map<string, Vec2>();
+      const endpoints: Array<{ id: string; end: "a" | "b"; world: Vec2 }> = [];
+      const room = sceneRef.current.rooms[0];
+      for (const id of activeIds) {
+        const b = room.bodies.find((bb) => bb.id === id);
+        if (b) {
+          positions.set(id, { ...b.position });
+          continue;
+        }
+        const c = room.connectors.find((cc) => cc.id === id);
+        if (!c) continue;
+        if (!isBodyEndpoint(c.a)) endpoints.push({ id: c.id, end: "a", world: { ...c.a.world } });
+        if (!isBodyEndpoint(c.b)) endpoints.push({ id: c.id, end: "b", world: { ...c.b.world } });
+      }
+      multiDragRef.current = { start: raw, positions, endpoints };
+      capture(canvasRef.current, e.pointerId);
+      return;
+    }
+
     // Keep the current selection if it's under the point (so a drag moves it
     // and a click advances the cycle); otherwise grab the topmost.
     const cur = selectedRef.current;
@@ -863,6 +1068,89 @@ export default function App() {
     if (!building) return;
     const raw = worldAt(e);
     hoverWorldRef.current = raw; // remember where the cursor is, so paste lands here
+
+    // Group rotation in progress: rotate every captured body + world endpoint
+    // around the pivot by the angular delta. Body rotations stack on top of
+    // their starting rotation; positions are rotated around pivot.
+    if (groupRotateRef.current) {
+      const { pivot, startAngle, bodies, endpoints } = groupRotateRef.current;
+      const angle = Math.atan2(raw.y - pivot.y, raw.x - pivot.x);
+      const dtheta = angle - startAngle;
+      const cos = Math.cos(dtheta);
+      const sin = Math.sin(dtheta);
+      const size = sceneRef.current.rooms[0].settings.size;
+      let next = sceneRef.current;
+      for (const b of bodies) {
+        const dx = b.pos.x - pivot.x;
+        const dy = b.pos.y - pivot.y;
+        const rotated = {
+          x: pivot.x + dx * cos - dy * sin,
+          y: pivot.y + dx * sin + dy * cos,
+        };
+        const body = next.rooms[0].bodies.find((bb) => bb.id === b.id);
+        if (!body) continue;
+        next = updateBody(next, 0, b.id, {
+          position: clampInsideRoom(size, body, rotated),
+          rotation: b.rot + dtheta,
+        });
+      }
+      for (const ep of endpoints) {
+        const dx = ep.world.x - pivot.x;
+        const dy = ep.world.y - pivot.y;
+        const rotated = { x: pivot.x + dx * cos - dy * sin, y: pivot.y + dx * sin + dy * cos };
+        next = updateConnector(next, 0, ep.id, { [ep.end]: { world: rotated } });
+      }
+      sceneRef.current = next;
+      sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
+      bump();
+      return;
+    }
+
+    // Marquee in progress: update the rectangle. Selection is finalized on
+    // pointerup so we don't churn React state on every move; the overlay is
+    // the live preview the user steers.
+    if (marqueeRef.current) {
+      marqueeRef.current.current = raw;
+      overlayRef.current = { marquee: { a: marqueeRef.current.start, b: raw } };
+      bump();
+      return;
+    }
+
+    // Multi-drag in progress: apply the same world-space delta to every
+    // body whose start position we captured at pointerdown, and to every
+    // selected connector's world-anchored endpoint. Snap (if on) is applied
+    // to the delta, not to each body individually, so the group's relative
+    // geometry stays intact. Body-local connector endpoints follow their
+    // bodies automatically — only world anchors need explicit translation.
+    if (multiDragRef.current) {
+      const { start, positions, endpoints } = multiDragRef.current;
+      let dx = raw.x - start.x;
+      let dy = raw.y - start.y;
+      if (snapOn()) {
+        const snapped = snapToGrid({ x: dx, y: dy }, GRID_SIZE);
+        dx = snapped.x;
+        dy = snapped.y;
+      }
+      const size = sceneRef.current.rooms[0].settings.size;
+      let next = sceneRef.current;
+      for (const [id, p0] of positions) {
+        const b = next.rooms[0].bodies.find((bb) => bb.id === id);
+        if (!b) continue;
+        const target = { x: p0.x + dx, y: p0.y + dy };
+        next = updateBody(next, 0, id, { position: clampInsideRoom(size, b, target) });
+      }
+      for (const ep of endpoints) {
+        next = updateConnector(next, 0, ep.id, {
+          [ep.end]: { world: { x: ep.world.x + dx, y: ep.world.y + dy } },
+        });
+      }
+      sceneRef.current = next;
+      // Same edge case as single-body drag (issue 24): moving a body off a
+      // pin/weld/motor pivot pops that connector off.
+      sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
+      bump();
+      return;
+    }
 
     if (connectorStartRef.current) {
       const end = snapEndpoint(sceneRef.current, 0, raw, ANCHOR_PX / cameraRef.current.scale);
@@ -941,6 +1229,78 @@ export default function App() {
       endpointDragRef.current = null;
       overlayRef.current = null;
     }
+
+    // Finalize a marquee gesture: bodies whose AABB intersects the rect join
+    // (or replace) the multi-selection. The empty-tap deselect branch below
+    // only fires when there was no real movement, so a true tap on empty
+    // canvas still acts as "deselect", not "select nothing."
+    if (marqueeRef.current) {
+      const mq = marqueeRef.current;
+      marqueeRef.current = null;
+      overlayRef.current = null;
+      const moved = Math.hypot(mq.current.x - mq.start.x, mq.current.y - mq.start.y) > 0.05;
+      if (moved) {
+        const rect = {
+          min: { x: Math.min(mq.start.x, mq.current.x), y: Math.min(mq.start.y, mq.current.y) },
+          max: { x: Math.max(mq.start.x, mq.current.x), y: Math.max(mq.start.y, mq.current.y) },
+        };
+        const inside = (p: Vec2 | null) =>
+          !!p && p.x >= rect.min.x && p.x <= rect.max.x && p.y >= rect.min.y && p.y <= rect.max.y;
+        const hits = new Set<string>();
+        for (const body of sceneRef.current.rooms[0].bodies) {
+          if (rectsOverlap(bodyAABB(body), rect)) hits.add(body.id);
+        }
+        // Connectors join the group if either endpoint's world position falls
+        // inside the rect. Both-body endpoints follow their bodies for free
+        // when the group translates; world endpoints need explicit handling
+        // in multi-drag so the connector doesn't get left behind.
+        for (const conn of sceneRef.current.rooms[0].connectors) {
+          const aw = endpointWorld(sceneRef.current, 0, conn.a);
+          const bw = endpointWorld(sceneRef.current, 0, conn.b);
+          if (inside(aw) || inside(bw)) hits.add(conn.id);
+        }
+        if (mq.additive) {
+          const next = new Set(multiSelectionRef.current);
+          if (selectedRef.current && bodyById(selectedRef.current)) next.add(selectedRef.current);
+          for (const id of hits) next.add(id);
+          setMultiSelection(next);
+        } else {
+          setMultiSelection(hits);
+        }
+        // Marquee takes precedence over any single-select; clear the latter
+        // so group chrome is the sole highlight.
+        selectedRef.current = null;
+        setSelected(null);
+        setTemplateSelected(null);
+        // No empty-tap follow-through after a successful drag.
+        emptyTapDownRef.current = null;
+        if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+          canvasRef.current.releasePointerCapture(e.pointerId);
+        }
+        return;
+      }
+    }
+
+    // Finalize a multi-drag: commit as one undo entry.
+    if (multiDragRef.current) {
+      multiDragRef.current = null;
+      commitGesture();
+      if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+        canvasRef.current.releasePointerCapture(e.pointerId);
+      }
+      return;
+    }
+
+    // Finalize a group rotation: commit as one undo entry.
+    if (groupRotateRef.current) {
+      groupRotateRef.current = null;
+      commitGesture();
+      if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+        canvasRef.current.releasePointerCapture(e.pointerId);
+      }
+      return;
+    }
+
     // Drag-back-to-delete: if the pointer is over the palette at the end of
     // a body drag, throw away the in-flight move drafts and commit a single
     // remove instead — so undo restores the body exactly where it started.
@@ -982,7 +1342,10 @@ export default function App() {
     emptyTapDownRef.current = null;
     if (empty) {
       const moved = Math.hypot(e.clientX - empty.x, e.clientY - empty.y) > 4;
-      if (!moved && selectedRef.current) select(null);
+      if (!moved) {
+        if (selectedRef.current) select(null);
+        else if (multiSelectionRef.current.size > 0) clearMultiSelection();
+      }
     }
 
     // Cycle-select: a click (no real drag) on something already selected
@@ -1089,6 +1452,27 @@ export default function App() {
         return;
       }
     }
+    // Multi-selection: delete every body in the group as a single undo step.
+    // Bodies first (so connectors referencing them cascade-clean via
+    // removeBodyAndConnectors), then any remaining selected connectors that
+    // didn't cascade — e.g. a spring with both endpoints on bodies that
+    // weren't in the group.
+    if (multiSelectionRef.current.size > 0) {
+      let next = sceneRef.current;
+      for (const id of multiSelectionRef.current) {
+        if (next.rooms[0].bodies.some((b) => b.id === id)) {
+          next = removeBodyAndConnectors(next, 0, id);
+        }
+      }
+      for (const id of multiSelectionRef.current) {
+        if (next.rooms[0].connectors.some((c) => c.id === id)) {
+          next = removeConnector(next, 0, id);
+        }
+      }
+      commitScene(next);
+      clearMultiSelection();
+      return;
+    }
     const id = selectedRef.current;
     if (!id) return;
     const next = bodyById(id)
@@ -1100,29 +1484,9 @@ export default function App() {
   const deleteSelectedRef = useRef(deleteSelected);
   deleteSelectedRef.current = deleteSelected;
 
-  // ----- copy / paste / duplicate (issue 17) -----
+  // ----- copy / paste / duplicate (issue 17, extended for multi-select) -----
   /** Cascade step (meters) for off-pointer paste/duplicate so copies don't stack. */
   const CASCADE = 0.5;
-
-  /** Add an independent copy of `snapshot` at `position` (clamped), and select
-   *  it. Routes through cloneBodyInto so a spawner's template is deep-copied
-   *  too (a Pick that drops `template` silently wiped it before — issue
-   *  surfaced in code review). The placeholder id is ignored; cloneItem mints
-   *  fresh ones inside cloneBodyInto. */
-  const spawnClone = (snapshot: Pick<Body, "type" | "rotation" | "props" | "template">, position: Vec2) => {
-    const size = sceneRef.current.rooms[0].settings.size;
-    const src: Body = {
-      id: "src", // ignored by cloneItem; fresh id minted from scene.nextId
-      type: snapshot.type,
-      position: { ...position },
-      rotation: snapshot.rotation,
-      props: { ...snapshot.props },
-      ...(snapshot.template ? { template: snapshot.template } : {}),
-    };
-    const added = cloneBodyInto(sceneRef.current, 0, src, clampInsideRoom(size, snapshot, position));
-    commitScene(added.scene);
-    select(added.id);
-  };
 
   /** A position offset down-right from `from` by the next cascade step. */
   const cascadeFrom = (from: Vec2): Vec2 => {
@@ -1130,15 +1494,121 @@ export default function App() {
     return { x: from.x + step, y: from.y - step };
   };
 
+  /** Snapshot of the current selection as a deep-cloned subgraph (bodies +
+   *  connectors among them). Returns null if nothing copyable is selected.
+   *  Connectors with endpoints outside the selection are dropped — copying
+   *  a partial group shouldn't carry references to bodies the paste won't
+   *  contain. */
+  const selectionSubgraph = (): { bodies: Body[]; connectors: Connector[] } | null => {
+    const room = sceneRef.current.rooms[0];
+    const ids: Set<string> =
+      multiSelectionRef.current.size > 0
+        ? new Set(multiSelectionRef.current)
+        : selectedRef.current
+          ? new Set([selectedRef.current])
+          : new Set();
+    if (ids.size === 0) return null;
+    const bodies = room.bodies
+      .filter((b) => ids.has(b.id))
+      .map((b): Body => ({
+        ...b,
+        position: { ...b.position },
+        props: { ...b.props },
+        ...(b.template ? { template: b.template } : {}),
+      }));
+    if (bodies.length === 0) return null;
+    const bodyIdSet = new Set(bodies.map((b) => b.id));
+    const connectors = room.connectors
+      .filter((c) => {
+        // Include a connector if it's in the selection OR (implicitly) both
+        // its endpoints are bodies that are. Endpoints on outside bodies are
+        // dropped here so the paste is self-contained.
+        if (ids.has(c.id)) return true;
+        if (!isBodyEndpoint(c.a) || !isBodyEndpoint(c.b)) return false;
+        return bodyIdSet.has(c.a.body) && bodyIdSet.has(c.b.body);
+      })
+      .filter((c) => {
+        // Now that we have the candidate set, drop any whose body-anchored
+        // endpoint references a body that isn't in the snapshot.
+        if (isBodyEndpoint(c.a) && !bodyIdSet.has(c.a.body)) return false;
+        if (isBodyEndpoint(c.b) && !bodyIdSet.has(c.b.body)) return false;
+        return true;
+      })
+      .map((c) => ({ ...c, props: { ...c.props } }));
+    return { bodies, connectors };
+  };
+
+  /** Paste a subgraph into the scene, translated by `offset`, and reselect
+   *  the new bodies + connectors as the active multi-selection. `cloneItem`
+   *  mints fresh ids and drops connectors with dangling endpoints. */
+  const pasteSubgraph = (
+    snapshot: { bodies: Body[]; connectors: Connector[] },
+    offset: Vec2,
+  ) => {
+    let nextId = sceneRef.current.nextId;
+    const mintId = (kind: "b" | "c"): string => {
+      const out = `${kind}${nextId}`;
+      nextId += 1;
+      return out;
+    };
+    const cloned = cloneItem(snapshot, mintId);
+    const size = sceneRef.current.rooms[0].settings.size;
+    for (const b of cloned.bodies) {
+      const target = { x: b.position.x + offset.x, y: b.position.y + offset.y };
+      b.position = clampInsideRoom(size, b, target);
+    }
+    for (const c of cloned.connectors) {
+      if (!isBodyEndpoint(c.a)) c.a = { world: { x: c.a.world.x + offset.x, y: c.a.world.y + offset.y } };
+      if (!isBodyEndpoint(c.b)) c.b = { world: { x: c.b.world.x + offset.x, y: c.b.world.y + offset.y } };
+    }
+    const room = sceneRef.current.rooms[0];
+    const nextScene: Scene = {
+      ...sceneRef.current,
+      nextId,
+      rooms: [
+        {
+          ...room,
+          bodies: [...room.bodies, ...cloned.bodies],
+          connectors: [...room.connectors, ...cloned.connectors],
+        },
+        ...sceneRef.current.rooms.slice(1),
+      ],
+    };
+    commitScene(nextScene);
+    // Select the newly-pasted items so a follow-up Cmd+D or drag works on
+    // the copy. Single-body paste → single-select; multi → multi-select.
+    if (cloned.bodies.length === 1 && cloned.connectors.length === 0) {
+      select(cloned.bodies[0].id);
+    } else {
+      const ids = new Set<string>();
+      for (const b of cloned.bodies) ids.add(b.id);
+      for (const c of cloned.connectors) ids.add(c.id);
+      setMultiSelection(ids);
+      selectedRef.current = null;
+      setSelected(null);
+      setTemplateSelected(null);
+    }
+  };
+
+  /** Centroid of a subgraph's body positions — the anchor we translate
+   *  during a paste-at-pointer so the cursor lands on the group's center. */
+  const subgraphCentroid = (snapshot: { bodies: Body[] }): Vec2 => {
+    let sx = 0, sy = 0;
+    for (const b of snapshot.bodies) {
+      sx += b.position.x;
+      sy += b.position.y;
+    }
+    return { x: sx / snapshot.bodies.length, y: sy / snapshot.bodies.length };
+  };
+
   const copySelection = () => {
-    const id = selectedRef.current;
-    if (!building || !id) return;
-    const body = bodyById(id); // connectors aren't copyable yet (single-select)
-    if (!body) return;
-    clipboardRef.current = { ...body, position: { ...body.position }, props: { ...body.props } };
+    if (!building) return;
+    const snapshot = selectionSubgraph();
+    if (!snapshot) return;
+    clipboardRef.current = snapshot;
     cascadeRef.current = 0;
     // Also carry it on the system clipboard for cross-tab/external paste.
-    navigator.clipboard?.writeText(bodyToShareText(body)).catch(() => {});
+    navigator.clipboard?.writeText(subgraphToShareText(snapshot)).catch(() => {});
   };
 
   const pasteClipboard = async () => {
@@ -1147,28 +1617,30 @@ export default function App() {
     if (!snapshot) {
       // Nothing copied in this tab — fall back to the system clipboard.
       try {
-        snapshot = bodyFromShareText(await navigator.clipboard.readText());
+        snapshot = subgraphFromShareText(await navigator.clipboard.readText());
       } catch {
         snapshot = null;
       }
     }
-    if (!snapshot) return;
-    // At the pointer when it's over the canvas; otherwise cascade off the source.
-    const at = hoverWorldRef.current ?? cascadeFrom(snapshot.position);
-    spawnClone(snapshot, at);
+    if (!snapshot || snapshot.bodies.length === 0) return;
+    const centroid = subgraphCentroid(snapshot);
+    // Paste at the cursor when it's over the canvas; otherwise cascade off
+    // the original centroid.
+    const at = hoverWorldRef.current ?? cascadeFrom(centroid);
+    pasteSubgraph(snapshot, { x: at.x - centroid.x, y: at.y - centroid.y });
   };
 
-  /** Cmd/Ctrl+D and the mobile button: duplicate the current selection. */
+  /** Cmd/Ctrl+D and the mobile button: duplicate the current selection. Both
+   *  single and multi selections work; multi duplicates the whole subgraph. */
   const duplicateSelection = () => {
-    const id = selectedRef.current;
-    if (!building || !id) return;
-    const body = bodyById(id);
-    if (!body) return;
+    if (!building) return;
+    const snapshot = selectionSubgraph();
+    if (!snapshot) return;
     // Fixed step off the current selection — not the paste cascade. Because
-    // spawnClone selects the new body, repeated Cmd+D walks a clean staircase
+    // pasteSubgraph reselects the copy, repeated Cmd+D walks a clean staircase
     // off whichever piece is selected now, so moving the selection (or picking
     // a different one) naturally rebases without the offset compounding.
-    spawnClone(body, { x: body.position.x + CASCADE, y: body.position.y - CASCADE });
+    pasteSubgraph(snapshot, { x: CASCADE, y: -CASCADE });
   };
 
   const copyRef = useRef(copySelection);
@@ -1558,7 +2030,7 @@ export default function App() {
       <button
         className="palette-connector palette-action"
         data-vaul-no-drag
-        disabled={!building || !selected}
+        disabled={!building || (!selected && multiSelection.size === 0)}
         onClick={deleteSelected}
         aria-label="Delete"
       >
@@ -1616,7 +2088,7 @@ export default function App() {
           <button
             className="icon-btn"
             onClick={deleteSelected}
-            disabled={!building || !selected}
+            disabled={!building || (!selected && multiSelection.size === 0)}
             aria-label="Delete"
           >
             <DoodleBorder interactive />
