@@ -12,6 +12,7 @@ import {
   pointInBody,
   connectorPivot,
   pruneDetachedConnectors,
+  moveBodyWithWorldAnchors,
 } from "./editor";
 import { createScene, addBody, addConnector, updateBody } from "../scene/scene";
 import { makeBody } from "../registry/registry";
@@ -347,5 +348,70 @@ describe("pruneDetachedConnectors (issue 24)", () => {
     s = updateBody(s, 0, a.id, { position: { x: 5, y: 5 } });
     s = pruneDetachedConnectors(s, 0);
     expect(s.rooms[0].connectors).toEqual([]);
+  });
+});
+
+describe("moveBodyWithWorldAnchors", () => {
+  for (const type of ["pin", "weld", "motor"] as const) {
+    it(`drags a ${type}'s world anchor along with the body so prune leaves it alone`, () => {
+      let s = createScene();
+      const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+      s = addConnector(s, 0, {
+        type,
+        a: { body: a.id, local: { x: 0, y: 0 } },
+        b: { world: { x: 0, y: 5 } },
+        props: {},
+      }).scene;
+      s = moveBodyWithWorldAnchors(s, 0, a.id, { x: 5, y: 5 });
+      const conn = s.rooms[0].connectors[0];
+      expect(s.rooms[0].bodies[0].position).toEqual({ x: 5, y: 5 });
+      // World endpoint rode along, so it still sits on the body's centre.
+      expect(conn.b).toEqual({ world: { x: 5, y: 5 } });
+      s = pruneDetachedConnectors(s, 0);
+      expect(s.rooms[0].connectors).toHaveLength(1);
+    });
+  }
+
+  it("leaves a spring's world anchor alone — springs are allowed to span", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    s = addConnector(s, 0, {
+      type: "spring",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 5 } },
+      props: { restLength: 0 },
+    }).scene;
+    s = moveBodyWithWorldAnchors(s, 0, a.id, { x: 5, y: 5 });
+    expect(s.rooms[0].connectors[0].b).toEqual({ world: { x: 0, y: 5 } });
+  });
+
+  it("doesn't touch connectors that don't reference the moved body", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const c = addBody(s, 0, makeBody("ball", { x: 10, y: 5 })); s = c.scene;
+    s = addConnector(s, 0, {
+      type: "pin",
+      a: { body: c.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 10, y: 5 } },
+      props: {},
+    }).scene;
+    s = moveBodyWithWorldAnchors(s, 0, a.id, { x: 5, y: 5 });
+    expect(s.rooms[0].connectors[0].b).toEqual({ world: { x: 10, y: 5 } });
+  });
+
+  it("noop when newPosition equals current position", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    s = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 5 } },
+      props: {},
+    }).scene;
+    const before = s;
+    s = moveBodyWithWorldAnchors(s, 0, a.id, { x: 0, y: 5 });
+    expect(s.rooms[0].connectors[0].b).toEqual({ world: { x: 0, y: 5 } });
+    // Position itself is updated (a no-op patch), but world anchors untouched.
+    expect(s.rooms[0].connectors).toEqual(before.rooms[0].connectors);
   });
 });

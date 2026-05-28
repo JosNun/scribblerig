@@ -65,6 +65,7 @@ import {
   applyResize,
   applyRotation,
   clampInsideRoom,
+  moveBodyWithWorldAnchors,
   pruneDetachedConnectors,
   bodyAABB,
   rectsOverlap,
@@ -1005,7 +1006,14 @@ export default function App() {
       // one delta to all of them without compounding drift.
       const positions = new Map<string, Vec2>();
       const endpoints: Array<{ id: string; end: "a" | "b"; world: Vec2 }> = [];
+      const seenEnds = new Set<string>();
       const room = sceneRef.current.rooms[0];
+      const pushEnd = (id: string, end: "a" | "b", world: Vec2) => {
+        const key = `${id}:${end}`;
+        if (seenEnds.has(key)) return;
+        seenEnds.add(key);
+        endpoints.push({ id, end, world: { ...world } });
+      };
       for (const id of activeIds) {
         const b = room.bodies.find((bb) => bb.id === id);
         if (b) {
@@ -1014,8 +1022,21 @@ export default function App() {
         }
         const c = room.connectors.find((cc) => cc.id === id);
         if (!c) continue;
-        if (!isBodyEndpoint(c.a)) endpoints.push({ id: c.id, end: "a", world: { ...c.a.world } });
-        if (!isBodyEndpoint(c.b)) endpoints.push({ id: c.id, end: "b", world: { ...c.b.world } });
+        if (!isBodyEndpoint(c.a)) pushEnd(c.id, "a", c.a.world);
+        if (!isBodyEndpoint(c.b)) pushEnd(c.id, "b", c.b.world);
+      }
+      // Also pick up world anchors of pin/weld/motor connectors that hang off
+      // a moving body but aren't themselves selected — same as the single-body
+      // drag fix. Without this, prune pops them off mid-drag. Springs are
+      // skipped (their anchors are intentionally free).
+      for (const c of room.connectors) {
+        if (c.type === "spring") continue;
+        const refsMoving =
+          (isBodyEndpoint(c.a) && positions.has(c.a.body)) ||
+          (isBodyEndpoint(c.b) && positions.has(c.b.body));
+        if (!refsMoving) continue;
+        if (!isBodyEndpoint(c.a)) pushEnd(c.id, "a", c.a.world);
+        if (!isBodyEndpoint(c.b)) pushEnd(c.id, "b", c.b.world);
       }
       multiDragRef.current = { start: raw, positions, endpoints };
       capture(canvasRef.current, e.pointerId);
@@ -1206,10 +1227,14 @@ export default function App() {
       const moved = { x: raw.x + off.x, y: raw.y + off.y };
       const snapped = snapOn() ? snapToGrid(moved, GRID_SIZE) : moved;
       const size = sceneRef.current.rooms[0].settings.size;
-      sceneRef.current = updateBody(sceneRef.current, 0, id, {
-        position: clampInsideRoom(size, body, snapped),
-      });
-      // Moving a body off a pin/weld/motor pivot pops that connector off (issue 24).
+      sceneRef.current = moveBodyWithWorldAnchors(
+        sceneRef.current,
+        0,
+        id,
+        clampInsideRoom(size, body, snapped),
+      );
+      // Single-body world anchors rode along (above); a multi-body pivot can
+      // still detach if this drag pulled the bodies apart.
       sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
       // Drag-back-to-delete: light up the palette as a drop target when the
       // pointer hovers it. The body itself stays clamped inside the room, so

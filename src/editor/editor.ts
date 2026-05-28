@@ -5,7 +5,7 @@
  */
 
 import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
-import { isBodyEndpoint } from "../scene/scene";
+import { isBodyEndpoint, updateBody, updateConnector } from "../scene/scene";
 import { connectorDef, def, type Props, type Shape } from "../registry/registry";
 import { textBoundsLocal } from "../registry/text-bounds";
 
@@ -482,6 +482,53 @@ export function connectorPivot(
   if (conn.type === "spring") return null;
   const ep = !isBodyEndpoint(conn.a) ? conn.a : !isBodyEndpoint(conn.b) ? conn.b : conn.a;
   return endpointWorld(scene, roomIndex, ep);
+}
+
+/**
+ * Move a body to `newPosition` and translate the world endpoint of every
+ * pin / weld / motor that references it by the same delta. Without this,
+ * a single-body placement (which seats the joint's world endpoint right
+ * on the body) would have its pivot left behind on every drag — and
+ * pruneDetachedConnectors would then remove the connector even though
+ * the user only moved the body.
+ *
+ * Body-local endpoints follow their bodies' frames automatically, so
+ * they need no translation. Springs have a world endpoint too, but
+ * they're allowed to span arbitrary distances — translating their
+ * anchor on every drag would yank the anchor along visually, so we
+ * skip them.
+ *
+ * The caller should still run `pruneDetachedConnectors` after this if
+ * a separate, multi-body pivot might have been broken by the move.
+ */
+export function moveBodyWithWorldAnchors(
+  scene: Scene,
+  roomIndex: number,
+  bodyId: string,
+  newPosition: Vec2,
+): Scene {
+  const body = scene.rooms[roomIndex].bodies.find((b) => b.id === bodyId);
+  if (!body) return scene;
+  const dx = newPosition.x - body.position.x;
+  const dy = newPosition.y - body.position.y;
+  let next = updateBody(scene, roomIndex, bodyId, { position: newPosition });
+  if (dx === 0 && dy === 0) return next;
+  for (const conn of next.rooms[roomIndex].connectors) {
+    if (conn.type === "spring") continue;
+    const refs =
+      (isBodyEndpoint(conn.a) && conn.a.body === bodyId) ||
+      (isBodyEndpoint(conn.b) && conn.b.body === bodyId);
+    if (!refs) continue;
+    const patch: Partial<Connector> = {};
+    if (!isBodyEndpoint(conn.a)) {
+      patch.a = { world: { x: conn.a.world.x + dx, y: conn.a.world.y + dy } };
+    }
+    if (!isBodyEndpoint(conn.b)) {
+      patch.b = { world: { x: conn.b.world.x + dx, y: conn.b.world.y + dy } };
+    }
+    if (patch.a || patch.b) next = updateConnector(next, roomIndex, conn.id, patch);
+  }
+  return next;
 }
 
 /**

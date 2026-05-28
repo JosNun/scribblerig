@@ -1,6 +1,6 @@
-# PRD: Motor with world anchor detaches when moved
+# PRD: Pin / weld / motor world anchor detaches when body is dragged
 
-Status: needs-triage
+Status: done
 
 ## Parent
 
@@ -8,70 +8,87 @@ Status: needs-triage
 
 ## Problem
 
-When a motor connects a body to a fixed point in world space (one
-endpoint = `{world: …}`, the other = `{body: …, local: …}`), dragging
-the body away from the world anchor appears to **unhook** the motor —
-the spin stops working / the joint pops off, even though the user
-hasn't touched the connector itself.
+When a pin / weld / motor is placed on a single body, the placement
+path creates one body endpoint (`{body, local}`) coincident with one
+world endpoint (`{world}`). Dragging the body anywhere else moves the
+body but leaves the world endpoint behind, so `pruneDetachedConnectors`
+sees the pivot fall outside the body and removes the connector —
+even though the user never touched the joint itself.
 
-Other connectors with a world endpoint (springs, pins) don't show the
-same problem, which makes the motor case feel like a bug rather than
-the intended pin/weld "you moved off the pivot, your joint pops" rule
-documented in [`editor.pruneDetachedConnectors`].
+This is shared by all three point-coincident connector types (pin,
+weld, motor); the existing `editor.test.ts` "removes a world-anchored
+pin/weld/motor when the body moves off its world point" test enshrines
+the current buggy behaviour. Springs are unaffected (they have no
+single pivot — `connectorPivot` returns `null` for them).
 
 ## Reproduce
 
-1. Drop a Ball, then a Motor connector placed on the ball (single-body
-   placement → motor pinned at world point under the ball's center).
-2. Press Play, watch the ball spin. Good.
-3. Press Reset. Drag the ball anywhere else on the canvas.
-4. Press Play. The ball no longer spins / is detached from the motor.
+1. Drop a Ball, then place a Motor (or Pin, or Weld) on the ball.
+   Single-body placement pins the connector at a world point under
+   the ball's center.
+2. Press Play — the joint works (motor spins, pin holds).
+3. Press Reset. Drag the ball somewhere else on the canvas.
+4. The connector silently vanishes; Play has nothing to drive.
 
-## Hypotheses
+## Root cause
 
-- `pruneDetachedConnectors` may be over-aggressive for motors: the
-  pivot's body-local coordinate is `(0,0)` (the body's center anchor),
-  but after a drag the body's *world* position has moved and the
-  motor's world endpoint hasn't, so the world↔body distance is now
-  non-zero. If prune treats that as "pivot point left the body," it
-  removes the joint — even though for motors the world anchor *should*
-  follow the body (the motor's whole point is to pin to that body's
-  center).
+`buildOverlapConnectors` (editor.ts) creates `b: { world: point }`
+for the single-body case. `pruneDetachedConnectors` then enforces
+"pivot must lie inside every referenced body" on every drag /
+resize / rotate (`App.tsx`). The body-local endpoint is at `(0,0)`,
+so after a drag the world pivot is no longer inside the body and
+the connector is pruned.
 
-  See `src/editor/editor.ts` for the prune logic and
-  `src/share/registry.ts` for the motor placement rules.
+The recently-shipped multi-select drag path already handles this
+correctly: `multiDragRef` captures world endpoints at pointerdown
+and translates them by the same delta as the body (App.tsx:1153).
+The single-body drag path doesn't do the analogous translation —
+that's the gap.
 
-- Alternative: prune behaves correctly, but the motor's compile path
-  in `src/sim/sim.ts` treats world+body as a fixed-frame joint and
-  fails to track the body's new pose at compile time.
+## Solution
 
-## Solution sketch
+Mirror the multi-drag pattern on the single-body drag path: at
+pointerdown, capture every world endpoint belonging to a connector
+that references the dragged body; on pointermove, translate each
+captured world endpoint by the body's drag delta before
+`pruneDetachedConnectors` runs — so the pivot follows the body and
+prune passes naturally.
 
-Diagnose first — likely either:
+Apply the same idea to multi-drag too: a user can shift-click a body
+into a multi-selection without selecting its attached connector, then
+drag — the connector's world anchor needs to ride along even though
+the connector itself isn't in the selection. Dedup keeps already-
+captured (selected) endpoints from translating twice.
 
-(a) Tighten `pruneDetachedConnectors` so the "pivot left the body"
-    check accounts for a motor's world endpoint being a logical pivot
-    *of* the body, not an independent anchor — i.e., when a body is
-    dragged, the motor's world endpoint should *follow* (or at least
-    not cause a detach). The drag-time `updateBody` could shift the
-    world endpoint by the same delta.
+This is a behaviour change for users who *want* the joint to detach
+when they drag the body away. They keep the same out: explicitly
+drag the connector's endpoint handle off the body.
 
-(b) Make motor world-anchors **track the connected body's center** at
-    compile, so the world endpoint is recomputed from the body's
-    current pose rather than the original placement.
+## Acceptance
 
-Either way, the multi-select drag path I just shipped (group drag
-translates world endpoints) is the analogue we want for single-body
-drag too — a motor's world anchor should ride along with the body it
-spins.
+- Place a motor on a ball, drag the ball, press Play → ball still
+  spins.
+- Same for pin and weld on a single body.
+- Shift-click a body that has a (world-anchored) pin/weld/motor into
+  a multi-selection without selecting the connector, drag → connector
+  still attached.
+- Existing multi-select drag of explicitly-selected world endpoints
+  still translates them exactly once (no double-move).
+- Spring drags unchanged (springs have no pivot, never pruned, never
+  carried).
+- The editor.test.ts "removes a world-anchored pin/weld/motor when
+  the body moves off its world point" test still asserts that
+  `pruneDetachedConnectors` itself behaves the same — the fix is at
+  the call site (drag handlers), not in prune.
 
 ## Out of scope
 
-- Spring/pin world anchors — those represent a deliberate "fixed point
-  in world" and shouldn't follow the body.
+- Resize / rotate paths: in principle a resize or rotate that shifts
+  the body's pivot in world space has the same issue, but the
+  user-reported case is drag. Track separately if it surfaces.
+- Sim-time compile changes — not needed; design-graph world endpoints
+  staying coincident with the body is enough.
 
 ## Notes
 
 - Repro discovered while building the onboarding-tutorial scene.
-- The fix may interact with the recently-added multi-drag world-anchor
-  translation in `App.tsx` — keep the single-body path consistent.
