@@ -67,6 +67,7 @@ import {
   clampInsideRoom,
   moveBodyWithWorldAnchors,
   pruneDetachedConnectors,
+  replaceConnectorAtPoint,
   bodyAABB,
   rectsOverlap,
   groupAABB,
@@ -766,6 +767,13 @@ export default function App() {
 
   /** Cancel any in-progress single-finger edit (when a 2nd finger lands). */
   const cancelActiveEdit = () => {
+    // Endpoint drag of a pin/weld/motor replaces the connector per-frame; if
+    // the cursor was over empty space at the cancel point the connector is
+    // gone from the live scene. Revert to the gesture-start snapshot so the
+    // commit lands as a no-op instead of an accidental delete.
+    if (endpointDragRef.current && gestureStartRef.current) {
+      sceneRef.current = gestureStartRef.current;
+    }
     // A partial drag leaves the scene mutated; landing it as one undo entry
     // keeps the user in control even when the gesture was aborted.
     commitGesture();
@@ -1196,10 +1204,27 @@ export default function App() {
     // Re-aim a connector endpoint, re-snapping as you drag.
     if (endpointDragRef.current) {
       const { id, end } = endpointDragRef.current;
-      const result = snapEndpoint(sceneRef.current, 0, raw, ANCHOR_PX / cameraRef.current.scale);
-      sceneRef.current = updateConnector(sceneRef.current, 0, id, { [end]: endpointOf(result) });
-      sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
-      overlayRef.current = { snap: result.world };
+      // Pin/weld/motor endpoint drag behaves like re-placing the connector
+      // at the cursor: lone body → world anchor, stack → all-pairs / chain /
+      // motor with stator, empty space → no connector (temporarily). The
+      // original is sourced from the gesture-start snapshot, so the cursor
+      // can pass through empty space mid-drag without losing the original
+      // type or the option to drop back on a body.
+      const start = gestureStartRef.current;
+      const original = start?.rooms[0].connectors.find((c) => c.id === id);
+      if (
+        start &&
+        original &&
+        (original.type === "pin" || original.type === "weld" || original.type === "motor")
+      ) {
+        sceneRef.current = replaceConnectorAtPoint(start, 0, id, original.type, raw).scene;
+        overlayRef.current = { snap: raw };
+      } else {
+        const result = snapEndpoint(sceneRef.current, 0, raw, ANCHOR_PX / cameraRef.current.scale);
+        sceneRef.current = updateConnector(sceneRef.current, 0, id, { [end]: endpointOf(result) });
+        sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
+        overlayRef.current = { snap: result.world };
+      }
       bump();
       return;
     }
@@ -1262,8 +1287,28 @@ export default function App() {
       setConnectorTool(null);
     }
     if (endpointDragRef.current) {
+      const { id } = endpointDragRef.current;
       endpointDragRef.current = null;
       overlayRef.current = null;
+      // Pin/weld/motor endpoint drag finalises as a fresh placement at the
+      // drop point. Empty-space release reverts to the start scene so the
+      // gesture commits as a no-op (the connector reappears).
+      const start = gestureStartRef.current;
+      const original = start?.rooms[0].connectors.find((c) => c.id === id);
+      if (
+        start &&
+        original &&
+        (original.type === "pin" || original.type === "weld" || original.type === "motor")
+      ) {
+        const drop = worldAt(e);
+        const r = replaceConnectorAtPoint(start, 0, id, original.type, drop);
+        if (r.firstAdded === null) {
+          sceneRef.current = start;
+        } else {
+          sceneRef.current = r.scene;
+          select(r.addedMotor ?? r.firstAdded);
+        }
+      }
     }
 
     // Finalize a marquee gesture: bodies whose AABB intersects the rect join

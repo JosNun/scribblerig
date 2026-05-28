@@ -5,7 +5,13 @@
  */
 
 import type { Body, Connector, Endpoint, Scene, Vec2 } from "../scene/scene";
-import { isBodyEndpoint, updateBody, updateConnector } from "../scene/scene";
+import {
+  addConnector,
+  isBodyEndpoint,
+  removeConnector,
+  updateBody,
+  updateConnector,
+} from "../scene/scene";
 import { connectorDef, def, type Props, type Shape } from "../registry/registry";
 import { textBoundsLocal } from "../registry/text-bounds";
 
@@ -482,6 +488,37 @@ export function connectorPivot(
   if (conn.type === "spring") return null;
   const ep = !isBodyEndpoint(conn.a) ? conn.a : !isBodyEndpoint(conn.b) ? conn.b : conn.a;
   return endpointWorld(scene, roomIndex, ep);
+}
+
+/**
+ * Replace one pin/weld/motor with what fresh click-to-place would produce
+ * at `drop`. Removes `originalId`; runs {@link buildOverlapConnectors} at
+ * `drop` and adds whatever it returns (lone body → world anchor, stack →
+ * all-pairs pins / chained welds / motor with rotor+stator). If `drop`
+ * is over empty space, the original is removed and nothing replaces it.
+ *
+ * Used by endpoint-drag so dragging a pin/weld/motor handle re-places
+ * the connector at the new point — matching the click-to-place mental
+ * model the user has from the connector tool.
+ */
+export function replaceConnectorAtPoint(
+  scene: Scene,
+  roomIndex: number,
+  originalId: string,
+  type: "pin" | "weld" | "motor",
+  drop: Vec2,
+): { scene: Scene; firstAdded: string | null; addedMotor: string | null } {
+  let next = removeConnector(scene, roomIndex, originalId);
+  const conns = buildOverlapConnectors(type, drop, next.rooms[roomIndex].bodies);
+  let firstAdded: string | null = null;
+  let addedMotor: string | null = null;
+  for (const c of conns) {
+    const added = addConnector(next, roomIndex, c);
+    next = added.scene;
+    if (!firstAdded) firstAdded = added.id;
+    if (c.type === "motor") addedMotor = added.id;
+  }
+  return { scene: next, firstAdded, addedMotor };
 }
 
 /**

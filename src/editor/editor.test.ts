@@ -13,6 +13,7 @@ import {
   connectorPivot,
   pruneDetachedConnectors,
   moveBodyWithWorldAnchors,
+  replaceConnectorAtPoint,
 } from "./editor";
 import { createScene, addBody, addConnector, updateBody } from "../scene/scene";
 import { makeBody } from "../registry/registry";
@@ -413,5 +414,101 @@ describe("moveBodyWithWorldAnchors", () => {
     expect(s.rooms[0].connectors[0].b).toEqual({ world: { x: 0, y: 5 } });
     // Position itself is updated (a no-op patch), but world anchors untouched.
     expect(s.rooms[0].connectors).toEqual(before.rooms[0].connectors);
+  });
+});
+
+describe("replaceConnectorAtPoint", () => {
+  it("re-anchors a pin to the wall when dropped on a single body", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const c = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 5 } },
+      props: {},
+    });
+    s = c.scene;
+    const r = replaceConnectorAtPoint(s, 0, c.id, "pin", { x: 0.2, y: 5 });
+    expect(r.scene.rooms[0].connectors).toHaveLength(1);
+    const next = r.scene.rooms[0].connectors[0];
+    expect(next.id).not.toBe(c.id);
+    // Body endpoint at the new local; world endpoint coincident at the drop point.
+    expect(next.a).toEqual({ body: a.id, local: { x: 0.2, y: 0 } });
+    expect(next.b).toEqual({ world: { x: 0.2, y: 5 } });
+    expect(r.firstAdded).toBe(next.id);
+    expect(r.addedMotor).toBeNull();
+  });
+
+  it("joins two overlapping bodies when the pin endpoint is dropped on them", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = b.scene;
+    const c = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 5 } },
+      props: {},
+    });
+    s = c.scene;
+    const r = replaceConnectorAtPoint(s, 0, c.id, "pin", { x: 0, y: 5 });
+    // All-pairs pin on two overlapping bodies = exactly one pin between them.
+    expect(r.scene.rooms[0].connectors).toHaveLength(1);
+    const next = r.scene.rooms[0].connectors[0];
+    expect(next.type).toBe("pin");
+    expect(next.a).toMatchObject({ body: expect.any(String) });
+    expect(next.b).toMatchObject({ body: expect.any(String) });
+  });
+
+  it("removes the connector with no replacement when dropped on empty space", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const c = addConnector(s, 0, {
+      type: "pin",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 5 } },
+      props: {},
+    });
+    s = c.scene;
+    const r = replaceConnectorAtPoint(s, 0, c.id, "pin", { x: 50, y: 50 });
+    expect(r.scene.rooms[0].connectors).toEqual([]);
+    expect(r.firstAdded).toBeNull();
+    expect(r.addedMotor).toBeNull();
+  });
+
+  it("re-anchors a motor to the wall when dropped on a single body", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const c = addConnector(s, 0, {
+      type: "motor",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 5 } },
+      props: { speed: 1, torque: 1 },
+    });
+    s = c.scene;
+    const r = replaceConnectorAtPoint(s, 0, c.id, "motor", { x: 0.3, y: 5 });
+    expect(r.scene.rooms[0].connectors).toHaveLength(1);
+    const next = r.scene.rooms[0].connectors[0];
+    expect(next.type).toBe("motor");
+    expect(next.a).toEqual({ body: a.id, local: { x: 0.3, y: 0 } });
+    expect(next.b).toEqual({ world: { x: 0.3, y: 5 } });
+    expect(r.addedMotor).toBe(next.id);
+  });
+
+  it("rebuilds a motor with rotor + stator on overlapping bodies", () => {
+    let s = createScene();
+    const a = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = a.scene;
+    const b = addBody(s, 0, makeBody("ball", { x: 0, y: 5 })); s = b.scene;
+    const c = addConnector(s, 0, {
+      type: "motor",
+      a: { body: a.id, local: { x: 0, y: 0 } },
+      b: { world: { x: 0, y: 5 } },
+      props: { speed: 1, torque: 1 },
+    });
+    s = c.scene;
+    const r = replaceConnectorAtPoint(s, 0, c.id, "motor", { x: 0, y: 5 });
+    // Two-body motor = one motor connector (rotor + stator), no auxiliary welds.
+    expect(r.scene.rooms[0].connectors).toHaveLength(1);
+    expect(r.scene.rooms[0].connectors[0].type).toBe("motor");
+    expect(r.addedMotor).toBe(r.scene.rooms[0].connectors[0].id);
   });
 });
