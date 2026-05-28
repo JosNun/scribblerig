@@ -361,7 +361,13 @@ function drawConnector(
   const stroke = connectorDef(conn.type).stroke;
 
   if (conn.type === "spring") {
-    parts.push(springSvg(pa, pb, stroke));
+    const stiffness = conn.props.stiffness;
+    const restLength = conn.props.restLength;
+    parts.push(springSvg(
+      pa, pb, stroke, camera.scale,
+      typeof stiffness === "number" ? stiffness : undefined,
+      typeof restLength === "number" ? restLength : undefined,
+    ));
     return;
   }
 
@@ -398,7 +404,11 @@ function endpointWorld(ep: Endpoint, bodies: Body[]): Vec2 | null {
  * `strokeSpring`. Deterministic — no randomness, so the shape is identical for
  * identical endpoints.
  */
-function springSvg(a: Vec2, b: Vec2, stroke: string): string {
+function springSvg(
+  a: Vec2, b: Vec2, stroke: string, scale: number,
+  stiffness: number | undefined,
+  restLength: number | undefined,
+): string {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len = Math.hypot(dx, dy) || 1;
@@ -406,9 +416,11 @@ function springSvg(a: Vec2, b: Vec2, stroke: string): string {
   const uy = dy / len;
   const nx = -uy;
   const ny = ux;
-  const coils = 6;
-  const amp = 7;
-  const lead = Math.min(12, len * 0.2);
+  const k = typeof stiffness === "number" && stiffness > 0 ? stiffness : 80;
+  const r = typeof restLength === "number" && restLength > 0 ? restLength : 2;
+  const coils = Math.max(3, Math.min(40, Math.round(3 + (k / 80) * (r / 2) * 3)));
+  const amp = 0.07 * scale;
+  const lead = Math.min(0.12 * scale, len * 0.2);
   const startX = a.x + ux * lead;
   const startY = a.y + uy * lead;
   const endX = b.x - ux * lead;

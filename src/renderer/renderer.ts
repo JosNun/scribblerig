@@ -250,7 +250,11 @@ export function createRenderer(
     if (conn.type === "spring") {
       // The rest-length marker is for the selected spring only (issue 12).
       if (selected) drawSpringRest(aw, bw, conn.props as Props);
-      strokeSpring(pa, pb);
+      strokeSpring(
+        pa, pb,
+        (conn.props as Props).stiffness as number | undefined,
+        (conn.props as Props).restLength as number | undefined,
+      );
       // Two anchors → two draggable endpoint handles when selected.
       if (selected) drawEndpointHandles([pa, pb]);
     } else {
@@ -422,8 +426,19 @@ export function createRenderer(
     ctx.restore();
   }
 
-  /** A zigzag coil between two screen points (deterministic — no shimmer). */
-  function strokeSpring(a: Vec2, b: Vec2): void {
+  /**
+   * A zigzag coil between two screen points (deterministic — no shimmer).
+   * Coil count is a fixed property of the spring (stiffness × rest length, so
+   * a stiffer or longer spring has more coils). The N coils are distributed
+   * across the current screen length, so a stretched spring naturally reads
+   * as lower-frequency — same coils spread further apart, like real metal.
+   * Amplitude and lead are in world metres so the coil tracks zoom.
+   */
+  function strokeSpring(
+    a: Vec2, b: Vec2,
+    stiffness: number | undefined,
+    restLength: number | undefined,
+  ): void {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -431,9 +446,13 @@ export function createRenderer(
     const uy = dy / len;
     const nx = -uy;
     const ny = ux;
-    const coils = 6;
-    const amp = 7;
-    const lead = Math.min(12, len * 0.2);
+    // 6 coils at the defaults (stiffness=80, rest=2 m); linear in both, capped
+    // so a very long very stiff spring doesn't render as a solid black bar.
+    const k = typeof stiffness === "number" && stiffness > 0 ? stiffness : 80;
+    const r = typeof restLength === "number" && restLength > 0 ? restLength : 2;
+    const coils = Math.max(3, Math.min(40, Math.round(3 + (k / 80) * (r / 2) * 3)));
+    const amp = 0.07 * cam.scale;
+    const lead = Math.min(0.12 * cam.scale, len * 0.2);
     const startX = a.x + ux * lead;
     const startY = a.y + uy * lead;
     const endX = b.x - ux * lead;
