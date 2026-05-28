@@ -1,6 +1,6 @@
 # PRD: Rotate handle sits too far from selected items
 
-Status: needs-triage
+Status: done
 
 ## Parent
 

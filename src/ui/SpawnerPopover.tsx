@@ -16,6 +16,7 @@ import {
   buildOverlapConnectors,
   connectorsAtPoint,
   handleAtPoint,
+  ROTATE_GAP_PX,
   type HandleId,
 } from "../editor/editor";
 import { screenToWorld, type Camera } from "../renderer/camera";
@@ -320,6 +321,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     if (!point) return;
     const cam = cameraRef.current;
     const tol = cam ? HANDLE_TOL_PX / cam.scale : 0.2;
+    const rotateGap = cam ? ROTATE_GAP_PX / cam.scale : 0.2;
     const anchorTol = cam ? ANCHOR_TOL_PX / cam.scale : 0.3;
 
     // 0. Connector tool armed → route this gesture to connector creation.
@@ -361,7 +363,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     if (selectedId) {
       const sel = template.bodies.find((b) => b.id === selectedId);
       if (sel) {
-        const handle = handleAtPoint(sel, point, tol);
+        const handle = handleAtPoint(sel, point, tol, rotateGap);
         if (handle) {
           const kind = handle === "rotate" ? "rotate" : "resize";
           dragRef.current =

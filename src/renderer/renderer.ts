@@ -15,7 +15,7 @@ import { isBodyEndpoint } from "../scene/scene";
 import type { BodyTransform, EphemeralFrame } from "../sim/sim";
 import { def, connectorDef, type Props, type Shape } from "../registry/registry";
 import { textBoundsLocal, textLines, textSizeMeters } from "../registry/text-bounds";
-import { bodyHandles, bodyToWorld, groupAABB, GROUP_ROTATE_GAP } from "../editor/editor";
+import { bodyHandles, bodyToWorld, groupAABB, ROTATE_GAP_PX } from "../editor/editor";
 import { type Camera, worldToScreen, screenToWorld } from "./camera";
 
 /** Transient draw-time overlay for the connector-draw interaction. */
@@ -183,7 +183,7 @@ export function createRenderer(
         if (aabb) {
           const cx = (aabb.min.x + aabb.max.x) / 2;
           const topAnchor = worldToScreen(cam, { x: cx, y: aabb.max.y });
-          const handle = worldToScreen(cam, { x: cx, y: aabb.max.y + GROUP_ROTATE_GAP });
+          const handle = worldToScreen(cam, { x: cx, y: aabb.max.y + ROTATE_GAP_PX / cam.scale });
           ctx.save();
           ctx.strokeStyle = SELECT_COLOR;
           ctx.lineWidth = 1.5;
@@ -476,7 +476,7 @@ export function createRenderer(
     const posed = { ...body, position: t.position, rotation: t.rotation };
     const center = worldToScreen(cam, t.position);
     ctx.save();
-    for (const h of bodyHandles(posed)) {
+    for (const h of bodyHandles(posed, ROTATE_GAP_PX / cam.scale)) {
       const p = worldToScreen(cam, bodyToWorld(posed, h.local));
       if (h.id === "rotate") {
         ctx.strokeStyle = SELECT_COLOR;

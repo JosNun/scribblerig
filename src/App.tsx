@@ -71,7 +71,7 @@ import {
   bodyAABB,
   rectsOverlap,
   groupAABB,
-  GROUP_ROTATE_GAP,
+  ROTATE_GAP_PX,
   type HandleId,
 } from "./editor/editor";
 import { snap as snapEndpoint, endpointOf, type SnapResult } from "./snapping/snapping";
@@ -842,7 +842,7 @@ export default function App() {
       const aabb = groupAABB(sceneRef.current, 0, multiSelectionRef.current);
       if (aabb) {
         const cx = (aabb.min.x + aabb.max.x) / 2;
-        const handleWorld = { x: cx, y: aabb.max.y + GROUP_ROTATE_GAP };
+        const handleWorld = { x: cx, y: aabb.max.y + ROTATE_GAP_PX / cameraRef.current.scale };
         const tol = HANDLE_PX / cameraRef.current.scale;
         if (Math.hypot(raw.x - handleWorld.x, raw.y - handleWorld.y) <= tol) {
           const pivot = { x: cx, y: (aabb.min.y + aabb.max.y) / 2 };
@@ -871,7 +871,12 @@ export default function App() {
     // A resize/rotate handle on the selected body takes priority.
     const sel = selectedRef.current ? bodyById(selectedRef.current) : null;
     if (sel) {
-      const handle = handleAtPoint(sel, raw, HANDLE_PX / cameraRef.current.scale);
+      const handle = handleAtPoint(
+        sel,
+        raw,
+        HANDLE_PX / cameraRef.current.scale,
+        ROTATE_GAP_PX / cameraRef.current.scale,
+      );
       if (handle) {
         handleDragRef.current = handle;
         // Same rationale as the body-drag hide (issue 19): the popover anchor

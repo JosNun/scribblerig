@@ -138,13 +138,14 @@ export interface Handle {
   local: Vec2;
 }
 
-/** Gap (meters) between a body's top edge and its rotation handle. */
-const ROTATE_GAP = 0.8;
-
-/** Gap (meters) from the group's AABB top to the multi-selection rotation
- *  handle. Exported so the renderer (draws it) and the pointer layer (hit-
- *  tests it) stay in agreement on placement. */
-export const GROUP_ROTATE_GAP = 0.8;
+/** Gap (pixels) between a selection's top edge and its rotation handle.
+ *  Pixel-based so the affordance sits the same distance from the bounding
+ *  box at any zoom — meter-based gaps drift inside the box at low zoom and
+ *  off-screen at high zoom. Callers convert to world units with
+ *  `ROTATE_GAP_PX / cam.scale` and pass the result to `bodyHandles` /
+ *  `handleAtPoint`, or use it directly for the group handle. Shared between
+ *  the single-body and group rotate handles. */
+export const ROTATE_GAP_PX = 24;
 
 /** Bounding half-extents of a body's collision shapes, in local meters. */
 function halfExtents(body: Body): { hw: number; hh: number } {
@@ -239,10 +240,13 @@ function isCircle(body: Body): boolean {
   return shapes.length === 1 && shapes[0].kind === "circle";
 }
 
-/** Manipulation handles for a body, in body-local coords. */
-export function bodyHandles(body: Body): Handle[] {
+/** Manipulation handles for a body, in body-local coords. `rotateGap` is the
+ *  world-space gap between the body's top and the rotate handle — derive it
+ *  from the camera (`ROTATE_GAP_PX / cam.scale`) so the handle keeps a
+ *  consistent pixel offset across zoom levels. */
+export function bodyHandles(body: Body, rotateGap: number): Handle[] {
   const { hw, hh } = halfExtents(body);
-  const handles: Handle[] = [{ id: "rotate", local: { x: 0, y: hh + ROTATE_GAP } }];
+  const handles: Handle[] = [{ id: "rotate", local: { x: 0, y: hh + rotateGap } }];
   // Text resizes via the `size` prop in the panel — no corner / radius handles
   // (a text body has only one scalar dimension, and dragging the corners of a
   // measured-glyph box would be confusing).
@@ -260,11 +264,18 @@ export function bodyHandles(body: Body): Handle[] {
   return handles;
 }
 
-/** The handle whose world position is nearest `world` within `worldTol`, else null. */
-export function handleAtPoint(body: Body, world: Vec2, worldTol: number): HandleId | null {
+/** The handle whose world position is nearest `world` within `worldTol`, else null.
+ *  `rotateGap` must match what the renderer used to draw the handle — see
+ *  `bodyHandles`. */
+export function handleAtPoint(
+  body: Body,
+  world: Vec2,
+  worldTol: number,
+  rotateGap: number,
+): HandleId | null {
   let best: HandleId | null = null;
   let bestDist = worldTol;
-  for (const h of bodyHandles(body)) {
+  for (const h of bodyHandles(body, rotateGap)) {
     const w = bodyToWorld(body, h.local);
     const d = Math.hypot(w.x - world.x, w.y - world.y);
     if (d <= bestDist) {

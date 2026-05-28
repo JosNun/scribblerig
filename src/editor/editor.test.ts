@@ -110,16 +110,15 @@ describe("connectorsAtPoint", () => {
 
 describe("handles", () => {
   it("gives a box body four corner handles and a rotation handle above it", () => {
-    const hs = bodyHandles(platform()); // 3 × 0.4 → hw 1.5, hh 0.2
+    const hs = bodyHandles(platform(), 0.3); // 3 × 0.4 → hw 1.5, hh 0.2
     const byId = Object.fromEntries(hs.map((h) => [h.id, h.local]));
     expect(byId.ne).toEqual({ x: 1.5, y: 0.2 });
     expect(byId.sw).toEqual({ x: -1.5, y: -0.2 });
-    expect(byId.rotate.x).toBe(0);
-    expect(byId.rotate.y).toBeGreaterThan(0.2); // above the top edge
+    expect(byId.rotate).toEqual({ x: 0, y: 0.5 }); // hh + rotateGap
   });
 
   it("gives a circle body a single radius handle plus a rotation handle", () => {
-    const ids = bodyHandles(ball()).map((h) => h.id).sort();
+    const ids = bodyHandles(ball(), 0.3).map((h) => h.id).sort();
     expect(ids).toEqual(["radius", "rotate"]);
   });
 
@@ -130,8 +129,8 @@ describe("handles", () => {
 
   it("handleAtPoint detects a handle near a world point within tolerance", () => {
     const b = platform();
-    expect(handleAtPoint(b, { x: 1.52, y: 0.19 }, 0.1)).toBe("ne");
-    expect(handleAtPoint(b, { x: 0.5, y: 0.5 }, 0.1)).toBeNull();
+    expect(handleAtPoint(b, { x: 1.52, y: 0.19 }, 0.1, 0.3)).toBe("ne");
+    expect(handleAtPoint(b, { x: 0.5, y: 0.5 }, 0.1, 0.3)).toBeNull();
   });
 });
 
