@@ -1,9 +1,13 @@
 # ScribbleRig
 
+![ScribbleRig](public/og-default.png)
+
 A browser-based 2D physics sandbox in the spirit of *The Incredible Machine* —
 drop bodies into a room, connect them with springs, motors, welds, and pins, hit
 **Play**, and watch physics unfold. Everything is rendered in a hand-drawn doodle
 style, and a whole creation is shareable via a URL — no account, no backend.
+
+**[Try it →](https://scribblerig.josnun.com)**
 
 ## Features
 
@@ -46,3 +50,8 @@ swappable.
 - [`CONTEXT.md`](CONTEXT.md) — domain glossary and module map.
 - [`docs/adr/`](docs/adr) — architecture decision records.
 - [`.scratch/scribblerig/`](.scratch/scribblerig) — the PRD and issue tracker.
+
+## License
+
+ScribbleRig is licensed under the [GNU Affero General Public License v3.0](LICENSE)
+— © 2026 Josiah Nunemaker.
