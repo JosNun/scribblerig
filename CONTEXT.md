@@ -2,8 +2,9 @@
 
 ScribbleRig is a browser-based 2D physics sandbox in the spirit of *The Incredible
 Machine*: drop bodies into a room, connect them, hit Play, watch physics unfold —
-rendered in a hand-drawn doodle style and shareable via a URL with no account or
-backend.
+rendered in a hand-drawn doodle style and shareable via a URL with no account.
+Un-named scenes ride entirely in the URL; named ones mint an opt-in `/s/<id>`
+shortlink served by a small Cloudflare Worker.
 
 Full product spec: [`.scratch/scribblerig/PRD.md`](.scratch/scribblerig/PRD.md).
 

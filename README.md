@@ -5,7 +5,9 @@
 A browser-based 2D physics sandbox in the spirit of *The Incredible Machine* —
 drop bodies into a room, connect them with springs, motors, welds, and pins, hit
 **Play**, and watch physics unfold. Everything is rendered in a hand-drawn doodle
-style, and a whole creation is shareable via a URL — no account, no backend.
+style, and a whole creation packs into a shareable URL — no account, no sign-in.
+A small Cloudflare Worker mints optional named shortlinks (`/s/<id>`) and renders
+OG previews; the URL-share path keeps working unchanged.
 
 **[Try it →](https://scribblerig.josnun.com)**
 
@@ -18,8 +20,10 @@ style, and a whole creation is shareable via a URL — no account, no backend.
 - **Hand-drawn rendering** — [Rough.js](https://roughjs.com) doodles over a
   paper grid, with stable (non-shimmering) line wobble.
 - **Pan & zoom**, optional grid snapping, and a mobile-friendly bottom-sheet UI.
-- **Serverless sharing** — the scene is encoded into a URL fragment; decoding is
-  tolerant, so links keep working as the format evolves.
+- **URL-encoded sharing** — the scene is encoded straight into the URL, and
+  decoding is tolerant so links keep working as the format evolves. A Cloudflare
+  Worker mints optional named shortlinks (backed by KV) with OG previews;
+  un-named scenes never touch a backend.
 - **Per-tab sessions + autosave** — each tab holds its own build, with a Builds
   list (thumbnails) to reopen past creations.
 
