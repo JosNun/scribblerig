@@ -265,8 +265,13 @@ export default function App() {
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const gestureRef = useRef<{ mid: { x: number; y: number }; dist: number } | null>(null);
   const viewAdjustedRef = useRef(false);
-  // Desktop drag-to-pan with the middle mouse button (last canvas px).
+  // Desktop drag-to-pan (last canvas px): middle button, right button, or a
+  // left-drag while Space is held.
   const panDragRef = useRef<{ x: number; y: number } | null>(null);
+  // Is the cursor over the canvas? Gates the Space pan modifier, so Space keeps
+  // its normal meaning everywhere else. Unlike `hoverWorldRef` this tracks run
+  // mode too, since panning works there as well.
+  const overCanvasRef = useRef(false);
   // Palette collapse driven by the drawer's live position (see trackExpand).
   const stripRef = useRef<HTMLDivElement | null>(null);
   const expandRunningRef = useRef(false);
@@ -300,6 +305,10 @@ export default function App() {
   // membership changes. Kept in sync via `setMultiSelection` below.
   const [multiSelection, setMultiSelectionState] = useState<ReadonlySet<string>>(new Set());
   const [connectorTool, setConnectorTool] = useState<ConnectorType | null>(null);
+  // Space held (pan armed) and a pan drag in flight. State rather than refs
+  // because their only job is the canvas cursor, which React has to render.
+  const [spacePan, setSpacePan] = useState(false);
+  const [panning, setPanning] = useState(false);
   const [ghost, setGhost] = useState<{ type: BodyType; x: number; y: number; droppable: boolean } | null>(null);
   // Hide the spawner popover transiently while the user drags/rotates the
   // spawner glyph — the popover would otherwise lag the glyph by a frame
@@ -617,6 +626,40 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Space is a hold-to-pan modifier: while it's down, a left-drag on the canvas
+  // pans the view instead of editing (the Figma / Excalidraw gesture).
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat) return;
+      // Space is a canvas gesture, so it only arms while the cursor is over the
+      // canvas. Anywhere else it stays the browser's key — which keeps it
+      // activating a focused toolbar button for keyboard users.
+      if (!overCanvasRef.current) return;
+      const el = e.target instanceof HTMLElement ? e.target : null;
+      // A space typed into a field is a space, not a pan (the field can be
+      // focused while the cursor sits over the canvas).
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      // Otherwise Space would scroll the page or re-fire whichever button was
+      // last clicked and still holds focus.
+      e.preventDefault();
+      setSpacePan(true);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpacePan(false);
+    };
+    // The keyup can land on another window (alt-tab mid-pan), which would
+    // otherwise leave the modifier stuck on.
+    const onBlur = () => setSpacePan(false);
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   // Autosave the design graph (debounced) so a refresh restores in-progress
   // work. Skipped until the first edit (revision 0) so a lazily-forked new tab
   // doesn't materialize a duplicate build just by being opened.
@@ -806,9 +849,12 @@ export default function App() {
       emptyTapDownRef.current = null;
       return;
     }
-    // Middle-button drag pans the view (works in build and run modes).
-    if (e.button === 1) {
+    // Drag-to-pan the view — middle button, right button, or Space held with
+    // the left button. Works in build and run modes, and returns before every
+    // edit branch so a pan never selects, moves, or marquees anything.
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && spacePan)) {
       panDragRef.current = pointerInCanvas(e);
+      setPanning(true);
       capture(canvasRef.current, e.pointerId);
       return;
     }
@@ -1090,6 +1136,7 @@ export default function App() {
   };
 
   const onCanvasPointerMove = (e: React.PointerEvent) => {
+    overCanvasRef.current = true;
     if (pointersRef.current.has(e.pointerId)) {
       pointersRef.current.set(e.pointerId, pointerInCanvas(e));
     }
@@ -1281,7 +1328,15 @@ export default function App() {
       else gestureRef.current = pinchState();
       return;
     }
-    panDragRef.current = null;
+    // A pan drag owns the whole gesture — nothing below it can be pending.
+    if (panDragRef.current) {
+      panDragRef.current = null;
+      setPanning(false);
+      if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+        canvasRef.current.releasePointerCapture(e.pointerId);
+      }
+      return;
+    }
     if (connectorStartRef.current && connectorToolRef.current) {
       const start = connectorStartRef.current;
       const end = snapEndpoint(sceneRef.current, 0, worldAt(e), ANCHOR_PX / cameraRef.current.scale);
@@ -2372,12 +2427,20 @@ export default function App() {
       <canvas
         ref={canvasRef}
         className="stage"
-        style={{ cursor: connectorTool ? "crosshair" : "default" }}
+        style={{
+          cursor: panning ? "grabbing" : spacePan ? "grab" : connectorTool ? "crosshair" : "default",
+        }}
         onPointerDown={onCanvasPointerDown}
         onPointerMove={onCanvasPointerMove}
         onPointerUp={onCanvasPointerUp}
         onPointerCancel={onCanvasPointerUp}
-        onPointerLeave={() => (hoverWorldRef.current = null)}
+        // Right-drag pans, so the canvas must not raise the browser's menu.
+        onContextMenu={(e) => e.preventDefault()}
+        onPointerEnter={() => (overCanvasRef.current = true)}
+        onPointerLeave={() => {
+          hoverWorldRef.current = null;
+          overCanvasRef.current = false;
+        }}
       />
 
       {/* Transport — floating top-center */}

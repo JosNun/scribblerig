@@ -60,8 +60,11 @@ synonyms.
 - **World units** — meters (MKS), not pixels. Bodies sized ~0.1–10 units. The
   renderer's camera scales meters → pixels.
 - **Camera (view)** — pure meters→pixels transform with `scale` + origin
-  (`camera.ts`: `zoomAt`, `panBy`, `fitCamera`). Pan/zoomable (two-finger or
-  wheel/middle-drag), **local-only** — never serialized into the scene or URL.
+  (`camera.ts`: `zoomAt`, `panBy`, `fitCamera`). Zoom is wheel or pinch; pan is
+  two-finger, middle-drag, right-drag, or Space + left-drag (Space only arms
+  while the cursor is over the canvas, so it keeps its normal meaning
+  elsewhere). Both work in build *and* run mode, and are **local-only** — never
+  serialized into the scene or URL.
 - **Drawable cache** — each shape's Rough.js drawable is generated **once** and
   cached; per frame only the canvas transform changes. Keeps the wobble from
   shimmering. See [ADR-0004](docs/adr/0004-roughjs-cached-drawables.md).
