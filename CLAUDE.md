@@ -1,5 +1,10 @@
 # ScribbleRig
 
+## Deploying
+
+Pushing to `master` deploys — Cloudflare Workers Builds rebuilds on every push
+(configured dashboard-side, not in the tree). Don't run `bun run deploy`.
+
 ## Agent skills
 
 ### Issue tracker
