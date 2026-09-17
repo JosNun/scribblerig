@@ -113,6 +113,10 @@ const MAX_SCALE = 600;
 const SNAP_PEEK = "150px";
 const SNAP_FULL = 0.85;
 
+/** Viewport coordinates — satisfied by React synthetic *and* native pointer
+ *  events, so gesture helpers can be driven from either. */
+type PointerLike = { clientX: number; clientY: number };
+
 function capture(el: Element | null, pointerId: number) {
   try {
     el?.setPointerCapture(pointerId);
@@ -774,11 +778,11 @@ export default function App() {
   };
   const bodyById = (id: string) => sceneRef.current.rooms[0].bodies.find((b) => b.id === id);
   const connById = (id: string) => sceneRef.current.rooms[0].connectors.find((c) => c.id === id);
-  const pointerInCanvas = (e: React.PointerEvent) => {
+  const pointerInCanvas = (e: PointerLike) => {
     const rect = canvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
-  const worldAt = (e: React.PointerEvent) => screenToWorld(cameraRef.current, pointerInCanvas(e));
+  const worldAt = (e: PointerLike) => screenToWorld(cameraRef.current, pointerInCanvas(e));
   /** True when (clientX, clientY) falls inside the palette — the desktop
    *  panel on the left, or the mobile drawer's horizontal strip. Used to
    *  light up the palette as a delete zone while a body is being dragged,
@@ -1944,13 +1948,102 @@ export default function App() {
   };
 
   // ----- drag a body type from the palette onto the canvas -----
-  const onPaletteDown = (type: BodyType) => (e: React.PointerEvent) => {
-    if (!building) return;
-    e.preventDefault();
-    placingRef.current = type;
-    paletteOriginRef.current = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  //
+  // The gesture runs on *window* listeners rather than the tile's own
+  // onPointerMove/onPointerUp. Pointer capture on the tile is not something we
+  // can rely on for the life of a drag — a pointercancel, a re-render that
+  // swaps the node, or the browser handing the gesture elsewhere all drop it,
+  // and once it's gone every remaining event retargets to whatever sits under
+  // the cursor (the canvas). The tile then never sees its own pointerup, so
+  // the placement is neither committed nor cleaned up: the ghost stays welded
+  // to the cursor and only comes unstuck when the pointer wanders back over
+  // the palette and the tile starts receiving hover moves again. Window
+  // listeners see the whole gesture no matter who holds capture, so it always
+  // ends — in a drop, or in a clean abort.
+  const placingTeardownRef = useRef<(() => void) | null>(null);
+  /** Mobile strip only: the touch-down that may yet become a placement. */
+  const mobileDragStartRef = useRef<{ x: number; y: number; type: BodyType } | null>(null);
+
+  /** Tear down an in-flight placement: detach the listeners and drop all the
+   *  gesture state, including the ghost. Safe to call when none is running. */
+  const endPlacementGesture = () => {
+    placingTeardownRef.current?.();
+    placingTeardownRef.current = null;
+    placingRef.current = null;
+    paletteOriginRef.current = null;
     draggedOffRef.current = false;
-    capture(e.currentTarget as HTMLElement, e.pointerId);
+    mobileDragStartRef.current = null;
+    setGhost(null);
+  };
+
+  /** Move the ghost with the pointer. `draggedOff` latches the first time the
+   *  pointer leaves the originating tile, so a plain click on a tile never
+   *  spawns a ghost (or a body). */
+  const updatePlacement = (clientX: number, clientY: number) => {
+    const type = placingRef.current;
+    if (!type) return;
+    const r = paletteOriginRef.current;
+    if (r && (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom)) {
+      draggedOffRef.current = true;
+    }
+    if (!draggedOffRef.current) {
+      setGhost(null);
+      return;
+    }
+    setGhost({ type, x: clientX, y: clientY, droppable: isDroppableAt(clientX, clientY, type) });
+  };
+
+  /** Arm a placement and take ownership of the rest of the gesture. `origin`
+   *  is the tile the drag started from (null when the caller has already
+   *  decided the pointer is clear of it, as the mobile strip does after its
+   *  deliberate upward lift). */
+  const beginPlacementGesture = (
+    type: BodyType,
+    el: HTMLElement | null,
+    pointerId: number,
+    origin: DOMRect | null,
+  ) => {
+    endPlacementGesture(); // never leave a previous gesture half-live
+    placingRef.current = type;
+    paletteOriginRef.current = origin;
+    draggedOffRef.current = origin === null;
+    // Capture still helps in the common case — it keeps the canvas from
+    // seeing moves that aren't its own — it just isn't load-bearing any more.
+    capture(el, pointerId);
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId === pointerId) updatePlacement(ev.clientX, ev.clientY);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      const placed = placingRef.current;
+      const draggedOff = draggedOffRef.current;
+      endPlacementGesture();
+      if (placed && draggedOff) dropBodyAtPointer(placed, ev);
+    };
+    const onCancel = (ev: PointerEvent) => {
+      if (ev.pointerId === pointerId) endPlacementGesture();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    placingTeardownRef.current = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  };
+  // A gesture in flight at unmount would otherwise leave its window listeners
+  // behind, holding the whole component closure alive.
+  useEffect(() => () => placingTeardownRef.current?.(), []);
+
+  const onPaletteDown = (type: BodyType) => (e: React.PointerEvent) => {
+    // Primary button only: a right-click raises the context menu instead of
+    // ever delivering a pointerup, which used to arm a placement that nothing
+    // could finish.
+    if (!building || e.button !== 0) return;
+    e.preventDefault();
+    const el = e.currentTarget as HTMLElement;
+    beginPlacementGesture(type, el, e.pointerId, el.getBoundingClientRect());
   };
   // A drop is valid if the pointer lands on the main canvas OR on the open
   // spawner-popover canvas (which routes the body into the template — issue
@@ -1974,7 +2067,7 @@ export default function App() {
    * scene drops — template drops leave the spawner selected so the popover
    * stays open and the user can keep authoring.
    */
-  const dropBodyAtPointer = (type: BodyType, e: React.PointerEvent) => {
+  const dropBodyAtPointer = (type: BodyType, e: PointerLike) => {
     if (!building) return;
     const spawnerId = popoverSpawnerIdRef.current;
     if (spawnerId) {
@@ -2012,29 +2105,6 @@ export default function App() {
     select(added.id);
   };
 
-  const onPaletteMove = (e: React.PointerEvent) => {
-    if (!placingRef.current) return;
-    const r = paletteOriginRef.current;
-    if (r && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) {
-      draggedOffRef.current = true;
-    }
-    if (!draggedOffRef.current) {
-      setGhost(null);
-      return;
-    }
-    setGhost({ type: placingRef.current, x: e.clientX, y: e.clientY, droppable: isDroppableAt(e.clientX, e.clientY, placingRef.current!) });
-  };
-  const onPaletteUp = (e: React.PointerEvent) => {
-    const type = placingRef.current;
-    const draggedOff = draggedOffRef.current;
-    placingRef.current = null;
-    paletteOriginRef.current = null;
-    draggedOffRef.current = false;
-    setGhost(null);
-    if (!type || !draggedOff) return;
-    dropBodyAtPointer(type, e);
-  };
-
   // Mobile palette drag-to-place. The strip is natively pan-x scrollable
   // (touch-action: pan-x), but iOS would commit to native horizontal pan as
   // soon as a touch starts on a tile — silently swallowing any subsequent
@@ -2043,42 +2113,34 @@ export default function App() {
   // preventDefault the moment vertical movement is detected, claiming the
   // gesture back from iOS before native scroll commits. Horizontal swipes
   // are left untouched, so native scroll handles them as before.
-  const mobileDragStartRef = useRef<{ x: number; y: number; type: BodyType } | null>(null);
+  //
+  // Unlike the desktop tile this arms on *move*, not down — the strip has to
+  // see which way the finger went first. Once it promotes to a placement the
+  // window listeners own the rest of the gesture, same as desktop.
   const onStripDown = (type: BodyType) => (e: React.PointerEvent) => {
     if (!building) return;
     mobileDragStartRef.current = { x: e.clientX, y: e.clientY, type };
   };
   const onStripMove = (e: React.PointerEvent) => {
     const start = mobileDragStartRef.current;
-    if (!start) return;
-    if (!placingRef.current) {
-      const dx = e.clientX - start.x;
-      const dy = e.clientY - start.y;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        mobileDragStartRef.current = null; // sideways → let native scroll
-        return;
-      }
-      if (dy > -10) return; // wait for a deliberate upward lift
-      placingRef.current = start.type;
-      draggedOffRef.current = true;
-      capture(e.currentTarget as HTMLElement, e.pointerId);
+    if (!start || placingRef.current) return; // already promoted → window owns it
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      mobileDragStartRef.current = null; // sideways → let native scroll
+      return;
     }
-    setGhost({ type: placingRef.current!, x: e.clientX, y: e.clientY, droppable: isDroppableAt(e.clientX, e.clientY, placingRef.current!) });
+    if (dy > -10) return; // wait for a deliberate upward lift
+    // The lift is already clear of the tile, so there's no origin rect to
+    // escape — the ghost should show from this very move.
+    beginPlacementGesture(start.type, e.currentTarget as HTMLElement, e.pointerId, null);
+    updatePlacement(e.clientX, e.clientY);
   };
-  const onStripUp = (e: React.PointerEvent) => {
-    const type = placingRef.current;
+  /** Ends the *arming* phase for a strip gesture that never became a
+   *  placement (a tap, or a sideways swipe). A promoted one ends at the
+   *  window listeners instead. */
+  const onStripEnd = () => {
     mobileDragStartRef.current = null;
-    placingRef.current = null;
-    draggedOffRef.current = false;
-    setGhost(null);
-    if (!type) return;
-    dropBodyAtPointer(type, e);
-  };
-  const onStripCancel = () => {
-    mobileDragStartRef.current = null;
-    placingRef.current = null;
-    draggedOffRef.current = false;
-    setGhost(null);
   };
 
   // Non-passive touchmove listener so we can preventDefault on vertical
@@ -2205,8 +2267,6 @@ export default function App() {
               className="palette-item"
               disabled={!building}
               onPointerDown={onPaletteDown(d.type)}
-              onPointerMove={onPaletteMove}
-              onPointerUp={onPaletteUp}
             >
               <BodyPreview type={d.type} />
               <span>{d.label}</span>
@@ -2256,8 +2316,8 @@ export default function App() {
               disabled={!building}
               onPointerDown={onStripDown(d.type)}
               onPointerMove={onStripMove}
-              onPointerUp={onStripUp}
-              onPointerCancel={onStripCancel}
+              onPointerUp={onStripEnd}
+              onPointerCancel={onStripEnd}
             >
               <BodyPreview type={d.type} />
               <span>{d.label}</span>
