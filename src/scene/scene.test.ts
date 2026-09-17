@@ -10,6 +10,8 @@ import {
   removeConnector,
   updateConnector,
   removeBodyAndConnectors,
+  moveSelectionIntoTemplate,
+  TEMPLATE_BOUND,
   tracerScene,
   cloneItem,
   type Body,
@@ -353,6 +355,178 @@ describe("cloneItem", () => {
     expect((clone.template!.connectors[0].b as { body: string }).body).toBe("b102");
     // The source template is untouched.
     expect(spawner.template!.bodies.map((b) => b.id)).toEqual(["b2", "b3"]);
+  });
+});
+
+describe("moveSelectionIntoTemplate", () => {
+  /** A room holding a spawner plus a two-body contraption welded together,
+   *  the shape of thing a user builds on the canvas and then drags into the
+   *  spawner's popover. */
+  const contraptionScene = () => {
+    let scene = createScene();
+    scene = addBody(scene, 0, {
+      type: "spawner",
+      position: { x: 1, y: 6 },
+      rotation: 0,
+      props: { interval: 1, maxAlive: 10, speed: 0 },
+    }).scene;
+    scene = addBody(scene, 0, {
+      type: "ball",
+      position: { x: 5, y: 4 },
+      rotation: 0,
+      props: { radius: 0.4 },
+    }).scene;
+    scene = addBody(scene, 0, {
+      type: "platform",
+      position: { x: 6, y: 4 },
+      rotation: 0.25,
+      props: { width: 1, height: 0.2 },
+    }).scene;
+    scene = addConnector(scene, 0, {
+      type: "weld",
+      a: { body: "b2", local: { x: 0, y: 0 } },
+      b: { body: "b3", local: { x: 0, y: 0 } },
+      props: {},
+    }).scene;
+    return scene;
+  };
+
+  it("relocates the selected bodies and their joints out of the room and into the template", () => {
+    const scene = contraptionScene();
+
+    const out = moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b2", "b3"]), { x: 0, y: 0 })!;
+    const room = out.scene.rooms[0];
+    const spawner = room.bodies.find((b) => b.id === "b1")!;
+
+    // Gone from the room — it's a move, not a copy — and the weld went with it.
+    expect(room.bodies.map((b) => b.id)).toEqual(["b1"]);
+    expect(room.connectors).toEqual([]);
+    expect(spawner.template!.bodies.map((b) => b.id)).toEqual(["b2", "b3"]);
+    expect(spawner.template!.connectors.map((c) => c.id)).toEqual(["c4"]);
+    expect(out.ids).toEqual(["b2", "b3"]);
+  });
+
+  it("appends to an existing template rather than replacing it", () => {
+    let scene = contraptionScene();
+    scene = moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b2"]), { x: 0, y: 0 })!.scene;
+
+    const out = moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b3"]), { x: 0, y: 0 })!;
+
+    expect(out.scene.rooms[0].bodies.find((b) => b.id === "b1")!.template!.bodies.map((b) => b.id))
+      .toEqual(["b2", "b3"]);
+  });
+
+  it("centers the group on the drop point, preserving relative layout and rotation", () => {
+    const scene = contraptionScene();
+
+    const out = moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b2", "b3"]), { x: 0.5, y: -0.25 })!;
+    const tmpl = out.scene.rooms[0].bodies.find((b) => b.id === "b1")!.template!;
+    const [ball, platform] = tmpl.bodies;
+
+    // Bodies sat 1 m apart at the same height; the pair's center lands on the
+    // drop point and the gap survives.
+    expect(ball.position).toEqual({ x: 0, y: -0.25 });
+    expect(platform.position).toEqual({ x: 1, y: -0.25 });
+    expect(platform.rotation).toBe(0.25);
+  });
+
+  it("nudges a drop near the edge back inside the template bound", () => {
+    const scene = contraptionScene();
+
+    const out = moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b2", "b3"]), { x: 9, y: 9 })!;
+    const tmpl = out.scene.rooms[0].bodies.find((b) => b.id === "b1")!.template!;
+
+    // EPS: the clamp lands exactly on the bound, so float error can leave the
+    // last bit over it.
+    const EPS = 1e-9;
+    for (const b of tmpl.bodies) {
+      expect(Math.abs(b.position.x)).toBeLessThanOrEqual(TEMPLATE_BOUND + EPS);
+      expect(Math.abs(b.position.y)).toBeLessThanOrEqual(TEMPLATE_BOUND + EPS);
+    }
+    // Still 1 m apart — the clamp translates the group, never distorts it.
+    expect(tmpl.bodies[1].position.x - tmpl.bodies[0].position.x).toBeCloseTo(1);
+  });
+
+  it("refuses spawners and text but still moves the rest of the selection", () => {
+    let scene = contraptionScene();
+    scene = addBody(scene, 0, {
+      type: "text",
+      position: { x: 5, y: 5 },
+      rotation: 0,
+      props: { text: "hello" },
+    }).scene;
+    scene = addBody(scene, 0, {
+      type: "spawner",
+      position: { x: 8, y: 5 },
+      rotation: 0,
+      props: { interval: 1, maxAlive: 10, speed: 0 },
+    }).scene;
+
+    const out = moveSelectionIntoTemplate(
+      scene,
+      0,
+      "b1",
+      new Set(["b2", "b5", "b6"]),
+      { x: 0, y: 0 },
+    )!;
+    const room = out.scene.rooms[0];
+
+    expect(room.bodies.find((b) => b.id === "b1")!.template!.bodies.map((b) => b.id)).toEqual(["b2"]);
+    // The label and the second spawner stayed in the room.
+    expect(room.bodies.map((b) => b.id)).toEqual(["b1", "b3", "b5", "b6"]);
+  });
+
+  it("no-ops when the selection holds nothing a template can emit", () => {
+    let scene = contraptionScene();
+    scene = addBody(scene, 0, {
+      type: "text",
+      position: { x: 5, y: 5 },
+      rotation: 0,
+      props: { text: "hi" },
+    }).scene;
+
+    expect(moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b5"]), { x: 0, y: 0 })).toBeNull();
+    // Dropping a spawner into its own template is likewise refused.
+    expect(moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b1"]), { x: 0, y: 0 })).toBeNull();
+    expect(moveSelectionIntoTemplate(scene, 0, "b2", new Set(["b3"]), { x: 0, y: 0 })).toBeNull();
+  });
+
+  it("leaves behind connectors a template cannot express, without dangling refs", () => {
+    let scene = contraptionScene();
+    // A spring from the ball to a fixed world point: templates skip
+    // world-endpoint connectors at emit, so it can't come along — and it
+    // can't stay either, since the body it holds is leaving.
+    scene = addConnector(scene, 0, {
+      type: "spring",
+      a: { body: "b2", local: { x: 0, y: 0 } },
+      b: { world: { x: 2, y: 2 } },
+      props: { stiffness: 80 },
+    }).scene;
+
+    const out = moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b2", "b3"]), { x: 0, y: 0 })!;
+    const spawner = out.scene.rooms[0].bodies.find((b) => b.id === "b1")!;
+
+    expect(out.scene.rooms[0].connectors).toEqual([]);
+    expect(spawner.template!.connectors.map((c) => c.id)).toEqual(["c4"]);
+  });
+
+  it("carries a connector between two moving bodies even when only the bodies were selected", () => {
+    const scene = contraptionScene();
+
+    // Selection holds the two bodies but not the weld's own id.
+    const out = moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b2", "b3"]), { x: 0, y: 0 })!;
+
+    expect(out.scene.rooms[0].bodies.find((b) => b.id === "b1")!.template!.connectors).toHaveLength(1);
+  });
+
+  it("does not mutate the source scene", () => {
+    const scene = contraptionScene();
+
+    const out = moveSelectionIntoTemplate(scene, 0, "b1", new Set(["b2", "b3"]), { x: 0, y: 0 })!;
+    out.scene.rooms[0].bodies.find((b) => b.id === "b1")!.template!.bodies[0].position.x = 99;
+
+    expect(scene.rooms[0].bodies.map((b) => b.id)).toEqual(["b1", "b2", "b3"]);
+    expect(scene.rooms[0].bodies.find((b) => b.id === "b2")!.position.x).toBe(5);
   });
 });
 

@@ -575,3 +575,129 @@ export function removeBodyAndConnectors(scene: Scene, roomIndex: number, id: str
     ),
   });
 }
+
+/**
+ * Soft bound (meters, each axis from the emit point) that a template's layout
+ * is kept inside. The popover canvas neither scrolls nor pans, so a drop at
+ * its very edge could otherwise land mostly off-canvas and be hard to find
+ * again. Layout inside a template is purely cosmetic — emission re-anchors
+ * each item on its centroid — so nudging a drop inward costs nothing.
+ */
+export const TEMPLATE_BOUND = 1.2;
+
+/**
+ * Shift `positions` so their bounding box sits inside ±{@link TEMPLATE_BOUND},
+ * given a desired translation. Returns the (possibly reduced) translation. A
+ * span wider than the bound is centered instead of clamped, so a big
+ * contraption stays symmetric about the emit point rather than being shoved
+ * against one edge. Translation only — relative geometry never distorts.
+ */
+function clampSpan(values: number[], desired: number): number {
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (max - min > TEMPLATE_BOUND * 2) return -(min + max) / 2;
+  if (min + desired < -TEMPLATE_BOUND) return -TEMPLATE_BOUND - min;
+  if (max + desired > TEMPLATE_BOUND) return TEMPLATE_BOUND - max;
+  return desired;
+}
+
+/**
+ * Move a room-scope selection of bodies (plus the connectors among them) out
+ * of the room and into a spawner's template — the cross-scope drop behind
+ * "build a contraption on the canvas, then drag it into the spawner popover".
+ *
+ * The selection is relocated, not copied: what the spawner emits is exactly
+ * what left the room, so the user doesn't end up with a stray original to
+ * clean up. Ids are preserved (the originals are gone in the same operation,
+ * so they stay unique) which keeps the undo diff small.
+ *
+ * Rules, all of them mirroring what a template can actually express:
+ *
+ *  - **Spawners and text are refused** — nested spawners are stripped by the
+ *    sanitizer, and text is an authoring annotation, not something to emit.
+ *    They stay in the room; the rest of the selection still moves.
+ *  - **Connectors ride along when both ends sit on moving bodies**, selected
+ *    or not, so a contraption keeps its joints. A connector with a world
+ *    endpoint (or one end on a body left behind) can't be expressed in a
+ *    template — it's dropped, exactly as `emitItem` would have skipped it.
+ *  - The group's position bounding box is centered on `at` (template-local
+ *    meters, emit point at the origin) and nudged inside
+ *    {@link TEMPLATE_BOUND}. Rotations carry over untouched, matching emit's
+ *    translate-only placement.
+ *
+ * Returns null — a no-op — when the spawner isn't one, or when nothing in the
+ * selection is eligible to move.
+ */
+export function moveSelectionIntoTemplate(
+  scene: Scene,
+  roomIndex: number,
+  spawnerId: string,
+  ids: ReadonlySet<string>,
+  at: Vec2,
+): { scene: Scene; ids: string[] } | null {
+  const room = scene.rooms[roomIndex];
+  const spawner = room.bodies.find((b) => b.id === spawnerId);
+  if (!spawner || spawner.type !== "spawner") return null;
+  const moved = room.bodies.filter(
+    (b) =>
+      ids.has(b.id) &&
+      b.id !== spawnerId &&
+      b.type !== "spawner" &&
+      b.type !== "text",
+  );
+  if (moved.length === 0) return null;
+  const movedIds = new Set(moved.map((b) => b.id));
+  const movedConnectors = room.connectors.filter(
+    (c) =>
+      isBodyEndpoint(c.a) &&
+      isBodyEndpoint(c.b) &&
+      movedIds.has(c.a.body) &&
+      movedIds.has(c.b.body),
+  );
+
+  const cx = moved.reduce((s, b) => s + b.position.x, 0) / moved.length;
+  const cy = moved.reduce((s, b) => s + b.position.y, 0) / moved.length;
+  const dx = clampSpan(moved.map((b) => b.position.x), at.x - cx);
+  const dy = clampSpan(moved.map((b) => b.position.y), at.y - cy);
+
+  const placed: Body[] = moved.map((b) => ({
+    ...b,
+    position: { x: b.position.x + dx, y: b.position.y + dy },
+    props: { ...b.props },
+  }));
+  // Endpoints are body-local, so the translation leaves them alone; copy them
+  // anyway so the template never shares mutable objects with history snapshots.
+  const copyEndpoint = (ep: Endpoint): Endpoint =>
+    isBodyEndpoint(ep) ? { body: ep.body, local: { ...ep.local } } : { world: { ...ep.world } };
+  const placedConnectors: Connector[] = movedConnectors.map((c) => ({
+    ...c,
+    a: copyEndpoint(c.a),
+    b: copyEndpoint(c.b),
+    props: { ...c.props },
+  }));
+
+  const tmpl = spawner.template ?? { bodies: [], connectors: [] };
+  const nextTemplate: BodyTemplate = {
+    bodies: [...tmpl.bodies, ...placed],
+    connectors: [...tmpl.connectors, ...placedConnectors],
+  };
+  const movedConnectorIds = new Set(movedConnectors.map((c) => c.id));
+  return {
+    scene: replaceRoom(scene, roomIndex, {
+      ...room,
+      bodies: room.bodies
+        .filter((b) => !movedIds.has(b.id))
+        .map((b) => (b.id === spawnerId ? { ...b, template: nextTemplate } : b)),
+      // Connectors that came along are gone from the room; so are any left
+      // behind that referenced a moved body (they'd dangle) — the same
+      // cascade `removeBodyAndConnectors` applies.
+      connectors: room.connectors.filter(
+        (c) =>
+          !movedConnectorIds.has(c.id) &&
+          !(isBodyEndpoint(c.a) && movedIds.has(c.a.body)) &&
+          !(isBodyEndpoint(c.b) && movedIds.has(c.b.body)),
+      ),
+    }),
+    ids: placed.map((b) => b.id),
+  };
+}

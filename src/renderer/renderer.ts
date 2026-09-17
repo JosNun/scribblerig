@@ -69,13 +69,15 @@ const GRID_DOT = "rgba(43, 43, 43, 0.13)";
  *  dot count would balloon when zoomed far out). */
 const GRID_MIN_SPACING_PX = 7;
 
-/** Per-frame fade applied to a single body. Used to preview the
- *  drag-back-to-palette delete: the body shrinks toward its center and
- *  fades out as `progress` lerps 0→1, and back in as it lerps 1→0 when
- *  the pointer leaves the palette. Selection chrome is suppressed for
- *  the fading body so the dashed box doesn't outlive its contents. */
+/** Per-frame fade applied to bodies that are about to leave the room. Used to
+ *  preview the drag-back-to-palette delete, and the drag-into-a-spawner's
+ *  template move: each body shrinks toward its center and fades out as
+ *  `progress` lerps 0→1, and back in as it lerps 1→0 when the pointer
+ *  leaves the drop zone. Selection chrome is suppressed for fading bodies so
+ *  the dashed box doesn't outlive its contents. A whole group can fade at
+ *  once, so this carries a set rather than a single id. */
 export interface DeleteFade {
-  id: string;
+  ids: ReadonlySet<string>;
   /** 0 = no fade (normal), 1 = fully shrunk + transparent. */
   progress: number;
 }
@@ -144,18 +146,32 @@ export function createRenderer(
         drawWalls(room.settings.walls, room.settings.size);
       }
 
+      const fadingIds = deleteFade && deleteFade.progress > 0 ? deleteFade.ids : null;
+
       // Connectors under the bodies they join. A connector picks up the
-      // selection highlight from either the single-select or the active group.
+      // selection highlight from either the single-select or the active group,
+      // and fades with the bodies it joins — otherwise a group being dragged
+      // out of the room would leave its joints hanging at full ink while the
+      // bodies vanish.
       for (const conn of room.connectors) {
         const sel = conn.id === selectedId || (multiSelectedIds?.has(conn.id) ?? false);
-        drawConnector(conn, transforms, sel);
+        const fading =
+          !!fadingIds &&
+          ((isBodyEndpoint(conn.a) && fadingIds.has(conn.a.body)) ||
+            (isBodyEndpoint(conn.b) && fadingIds.has(conn.b.body)));
+        if (fading) {
+          ctx.save();
+          ctx.globalAlpha = 1 - deleteFade!.progress;
+          drawConnector(conn, transforms, sel);
+          ctx.restore();
+        } else {
+          drawConnector(conn, transforms, sel);
+        }
       }
-
-      const fadingId = deleteFade && deleteFade.progress > 0 ? deleteFade.id : null;
       for (const body of room.bodies) {
         const t = transforms.get(body.id);
         if (!t) continue;
-        if (body.id === fadingId) {
+        if (fadingIds?.has(body.id)) {
           // Shrink toward + fade out around the body's screen position. Selection
           // chrome is suppressed so the dashed box / handles don't hover at full
           // size around vanishing contents.

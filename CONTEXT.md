@@ -35,6 +35,14 @@ synonyms.
   things that collide. Placed directly on a room. (The ball is the single
   circular body — radius, friction, bounciness, density — covering what were
   once separate ball and wheel types.)
+- **Template** — the subgraph a spawner emits: bodies + the connectors among
+  them, in the spawner's local frame with the emit point at the origin. Layout
+  inside it is cosmetic (emission re-anchors each **item** — one connected
+  component — on its centroid), and it can hold neither a nested spawner nor a
+  text body. Authored in the **template editor**, the popover anchored to a
+  selected spawner. The editor is *sticky*: it opens when a spawner is selected
+  but outlives that selection, so a contraption built in the room can be
+  selected and dragged into it (which **moves** it out of the room).
 - **Connector** — a constraint between two **endpoints** (spring, motor, rod, weld,
   pin). A joint, not a property of a body. **A connector has no collision geometry**
   — a motor just spins, it cannot collide.

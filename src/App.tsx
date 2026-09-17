@@ -14,6 +14,8 @@ import {
   addConnectorToTemplate,
   removeBodyFromTemplate,
   removeConnectorFromTemplate,
+  moveSelectionIntoTemplate,
+  TEMPLATE_BOUND,
   updateBodyInTemplate,
   updateConnectorInTemplate,
   isBodyEndpoint,
@@ -279,14 +281,16 @@ export default function App() {
   // Desktop palette panel — used as a delete drop target when an existing
   // body is dragged back over it. The mobile strip-row reuses `stripRef`.
   const paletteRef = useRef<HTMLDivElement | null>(null);
-  // Drag-back-to-delete preview. While the body drag's pointer is over the
-  // palette, the dragged body shrinks + fades on the canvas to signal "drop
-  // to delete". `target` is 1 when over, 0 when off; `progress` lerps toward
-  // it each frame in the render loop, so the transition eases in and out.
-  // `id` is the body to fade; held until progress fully returns to 0 so the
-  // body can ease back in after the pointer leaves the palette.
-  const deleteFadeRef = useRef<{ id: string | null; target: number; progress: number }>({
-    id: null,
+  // Leaving-the-room preview, shared by drag-back-to-delete (pointer over the
+  // palette) and drag-into-a-template (pointer over the spawner popover):
+  // the dragged bodies shrink + fade on the canvas to signal "drop and
+  // they're out of here". `target` is 1 when over a drop zone, 0 when off;
+  // `progress` lerps toward it each frame in the render loop, so the
+  // transition eases in and out. `ids` are the bodies to fade (a whole group
+  // when a multi-selection is being dragged); held until progress fully
+  // returns to 0 so they can ease back in after the pointer leaves.
+  const deleteFadeRef = useRef<{ ids: Set<string>; target: number; progress: number }>({
+    ids: new Set(),
     target: 0,
     progress: 0,
   });
@@ -321,6 +325,28 @@ export default function App() {
   // Cleared on any selection change in the main scope so it never refers to
   // a body that doesn't belong to the now-selected spawner.
   const [templateSelected, setTemplateSelected] = useState<string | null>(null);
+  // The spawner whose template popover is open, or null. Deliberately *not*
+  // derived from the selection: selecting a spawner opens it, but it then
+  // stays open while the user selects, marquees, and drags other things in
+  // the room — which is what makes "build a contraption, then drag it into
+  // the template" possible at all (the contraption has to be selected, and
+  // that selection can't be the spawner). Closed explicitly: the popover's
+  // ×, Escape, a tap on empty canvas, or leaving build mode.
+  const [popoverSpawnerId, setPopoverSpawnerId] = useState<string | null>(null);
+  const popoverSpawnerIdRef = useRef<string | null>(null);
+  const openTemplateEditor = (spawnerId: string) => {
+    popoverSpawnerIdRef.current = spawnerId;
+    setPopoverSpawnerId(spawnerId);
+  };
+  const closeTemplateEditor = () => {
+    popoverSpawnerIdRef.current = null;
+    setPopoverSpawnerId(null);
+    setTemplateSelected(null);
+  };
+  // True while a room-scope body drag hovers the open popover's mini-canvas —
+  // the release will move the dragged selection into the template. Drives the
+  // popover's drop-target chrome.
+  const [overTemplateDrop, setOverTemplateDrop] = useState(false);
   // Imperative handle into the open SpawnerPopover so onPaletteUp/onStripUp
   // can ask "is the pointer over your mini-canvas, and if so where?" to
   // route cross-scope drops into the template instead of the scene.
@@ -361,14 +387,14 @@ export default function App() {
    *  (doUndo/doRedo are rebuilt every render). */
   const validateTemplateSelected = () => {
     if (!templateSelected) return;
-    const sel = selectedRef.current ? bodyById(selectedRef.current) : null;
-    if (!sel || sel.type !== "spawner" || !sel.template) {
+    const sp = popoverSpawnerIdRef.current ? bodyById(popoverSpawnerIdRef.current) : null;
+    if (!sp || sp.type !== "spawner" || !sp.template) {
       setTemplateSelected(null);
       return;
     }
     const inTemplate =
-      sel.template.bodies.some((b) => b.id === templateSelected) ||
-      sel.template.connectors.some((c) => c.id === templateSelected);
+      sp.template.bodies.some((b) => b.id === templateSelected) ||
+      sp.template.connectors.some((c) => c.id === templateSelected);
     if (!inTemplate) setTemplateSelected(null);
   };
   const doUndo = () => {
@@ -461,18 +487,22 @@ export default function App() {
   const roomSettings = room.settings;
   const selectedBody = selected ? (room.bodies.find((b) => b.id === selected) ?? null) : null;
   const selectedConnector = selected ? (room.connectors.find((c) => c.id === selected) ?? null) : null;
-  // Body or connector inside the currently-selected spawner's template, when
-  // a template item is selected via the popover canvas. Null otherwise. The
-  // same templateSelected id refers to either a body or a connector —
-  // bodyAtPoint and connectorAtPoint use the scene-wide id space.
-  const templateBody =
-    selectedBody?.type === "spawner" && templateSelected
-      ? (selectedBody.template?.bodies.find((b) => b.id === templateSelected) ?? null)
-      : null;
-  const templateConnector =
-    selectedBody?.type === "spawner" && templateSelected
-      ? (selectedBody.template?.connectors.find((c) => c.id === templateSelected) ?? null)
-      : null;
+  // The spawner whose template editor is open. Looked up fresh every render,
+  // so a spawner that was deleted (or undone away) simply closes the popover
+  // instead of leaving a stale one anchored to nothing.
+  const popoverSpawner = popoverSpawnerId
+    ? (room.bodies.find((b) => b.id === popoverSpawnerId && b.type === "spawner") ?? null)
+    : null;
+  // Body or connector inside that spawner's template, when a template item is
+  // selected via the popover canvas. Null otherwise. The same templateSelected
+  // id refers to either a body or a connector — bodyAtPoint and
+  // connectorAtPoint use the scene-wide id space.
+  const templateBody = templateSelected
+    ? (popoverSpawner?.template?.bodies.find((b) => b.id === templateSelected) ?? null)
+    : null;
+  const templateConnector = templateSelected
+    ? (popoverSpawner?.template?.connectors.find((c) => c.id === templateSelected) ?? null)
+    : null;
   const snapOn = () => sceneRef.current.rooms[0].settings.snap;
   // Read undo/redo availability fresh each render. `bump()` after every commit
   // re-renders, so the button disabled state stays in sync without separate
@@ -545,10 +575,13 @@ export default function App() {
             fade.progress = Math.min(fade.target, fade.progress + step);
           } else {
             fade.progress = Math.max(fade.target, fade.progress - step);
-            if (fade.progress === 0) fade.id = null;
+            if (fade.progress === 0) fade.ids.clear();
           }
         }
-        const deleteFade = isBuild && fade.id && fade.progress > 0 ? { id: fade.id, progress: fade.progress } : null;
+        const deleteFade =
+          isBuild && fade.ids.size > 0 && fade.progress > 0
+            ? { ids: fade.ids, progress: fade.progress }
+            : null;
         rendererRef.current?.draw(
           sceneRef.current,
           transforms,
@@ -600,6 +633,10 @@ export default function App() {
         // the Room Settings panel). Multi-selection drops first if active.
         if (connectorToolRef.current) {
           cancelConnectorRef.current();
+        } else if (popoverSpawnerIdRef.current) {
+          // The template editor is sticky, so Esc peels it off first; a
+          // second press then falls through to the ordinary deselect.
+          closeTemplateEditor();
         } else if (selectedRef.current) {
           select(null);
         } else if (multiSelectionRef.current.size > 0) {
@@ -726,10 +763,14 @@ export default function App() {
     // A single-select supersedes any active group. (Shift-click extends the
     // group instead — handled in the pointer-down branch, not here.)
     clearMultiSelection();
-    // Any change to the main selection ends "I'm editing a template body" —
-    // a non-spawner selection closes the popover entirely; re-selecting the
-    // same spawner is an explicit "back to spawner" gesture.
+    // Any change to the main selection ends "I'm editing a template body".
     setTemplateSelected(null);
+    // Selecting a spawner opens (or switches) its template editor. Selecting
+    // anything else leaves an open editor alone — that's the whole point of
+    // the popover being sticky: you pick up a contraption in the room and
+    // drag it into the still-open template.
+    const body = id ? sceneRef.current.rooms[0].bodies.find((b) => b.id === id) : null;
+    if (body?.type === "spawner") openTemplateEditor(body.id);
   };
   const bodyById = (id: string) => sceneRef.current.rooms[0].bodies.find((b) => b.id === id);
   const connById = (id: string) => sceneRef.current.rooms[0].connectors.find((c) => c.id === id);
@@ -753,21 +794,48 @@ export default function App() {
     };
     return inside(paletteRef.current) || inside(stripRef.current);
   };
-  /** Toggle the "drop here to delete" affordance during a body drag. Drives
-   *  the delete-fade target; the render loop lerps progress toward it. The
-   *  body id is captured the first time we enter (from the current
-   *  selection — which is the body being dragged) and held until progress
-   *  returns to 0 so it can ease back out smoothly. */
-  const setDragOverPalette = (over: boolean) => {
+  /** The room bodies/connectors an in-flight drag is carrying: the active
+   *  group for a multi-drag, else the single dragged body. Empty when no body
+   *  drag is in flight. */
+  const draggedIds = (): ReadonlySet<string> => {
+    if (multiDragRef.current) return multiSelectionRef.current;
+    if (dragOffsetRef.current && selectedRef.current && bodyById(selectedRef.current)) {
+      return new Set([selectedRef.current]);
+    }
+    return new Set();
+  };
+  /** Toggle the "these are leaving the room" affordance during a body drag —
+   *  used by both drop zones (palette = delete, popover = into the template).
+   *  Drives the fade target; the render loop lerps progress toward it. The ids
+   *  are captured the first time we enter and held until progress returns to 0
+   *  so they can ease back out smoothly. */
+  const setDragOverDropZone = (over: boolean) => {
     const f = deleteFadeRef.current;
     f.target = over ? 1 : 0;
-    if (over && selectedRef.current && bodyById(selectedRef.current)) {
-      f.id = selectedRef.current;
+    if (over) {
+      const ids = draggedIds();
+      if (ids.size > 0) f.ids = new Set(ids);
     }
   };
-  /** Are we mid-fade (pointer over the palette, or still easing back out)?
+  /** Are we mid-fade (pointer over a drop zone, or still easing back out)?
    *  Used by pointerup to decide commit-as-delete vs commit-as-move. */
-  const isDragOverPalette = () => deleteFadeRef.current.target === 1;
+  const isDragOverDropZone = () => deleteFadeRef.current.target === 1;
+
+  /** Template-local drop point for an in-flight room drag, or null when the
+   *  pointer isn't over the open popover's mini-canvas (or the drag carries
+   *  nothing a template can hold — see {@link moveSelectionIntoTemplate}).
+   *  The spawner being dragged can't be dropped into its own template. */
+  const templateDropAt = (clientX: number, clientY: number): { spawnerId: string; at: Vec2 } | null => {
+    const spawnerId = popoverSpawnerIdRef.current;
+    if (!spawnerId) return null;
+    const at = spawnerPopoverRef.current?.pointToTemplate(clientX, clientY);
+    if (!at) return null;
+    const eligible = [...draggedIds()].some((id) => {
+      const b = bodyById(id);
+      return !!b && b.id !== spawnerId && b.type !== "spawner" && b.type !== "text";
+    });
+    return eligible ? { spawnerId, at } : null;
+  };
 
   // ----- camera (pan / zoom) -----
   /** RAF-coalesced bump for camera-driven view changes — the popover anchor
@@ -828,7 +896,8 @@ export default function App() {
     multiDragRef.current = null;
     groupRotateRef.current = null;
     overlayRef.current = null;
-    setDragOverPalette(false);
+    setDragOverDropZone(false);
+    setOverTemplateDrop(false);
   };
   const pinchState = () => {
     const pts = [...pointersRef.current.values()];
@@ -1240,6 +1309,7 @@ export default function App() {
       // Same edge case as single-body drag (issue 24): moving a body off a
       // pin/weld/motor pivot pops that connector off.
       sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
+      trackDropZones(e);
       bump();
       return;
     }
@@ -1313,11 +1383,24 @@ export default function App() {
       // Single-body world anchors rode along (above); a multi-body pivot can
       // still detach if this drag pulled the bodies apart.
       sceneRef.current = pruneDetachedConnectors(sceneRef.current, 0);
-      // Drag-back-to-delete: light up the palette as a drop target when the
-      // pointer hovers it. The body itself stays clamped inside the room, so
-      // the palette's appearance change is the user's only signal.
-      setDragOverPalette(pointerInPalette(e.clientX, e.clientY));
+      trackDropZones(e);
     }
+  };
+
+  /** Light up whichever drop zone the pointer is over during a body drag —
+   *  the open spawner popover (drop = move into the template) or the palette
+   *  (drop = delete). The popover wins when they overlap, since it's the
+   *  smaller, more deliberate target. The bodies themselves stay clamped
+   *  inside the room, so the zone's appearance change plus the shrink-fade is
+   *  the user's only signal. */
+  const trackDropZones = (e: React.PointerEvent) => {
+    const template = templateDropAt(e.clientX, e.clientY);
+    setOverTemplateDrop(!!template);
+    // Drag-back-to-delete is a single-body gesture (see the pointerup branch),
+    // so a group drag doesn't light the palette up — it would promise a delete
+    // that the release wouldn't perform. The template drop takes groups.
+    const overPalette = !multiDragRef.current && pointerInPalette(e.clientX, e.clientY);
+    setDragOverDropZone(!!template || overPalette);
   };
 
   const onCanvasPointerUp = (e: React.PointerEvent) => {
@@ -1369,6 +1452,52 @@ export default function App() {
           select(r.addedMotor ?? r.firstAdded);
         }
       }
+    }
+
+    // Cross-scope drop: a body drag (single or group) released over the open
+    // spawner popover's mini-canvas moves that selection out of the room and
+    // into the spawner's template. Checked before the marquee / multi-drag /
+    // palette-delete branches because it claims the whole gesture.
+    const templateDrop = templateDropAt(e.clientX, e.clientY);
+    if (templateDrop && (multiDragRef.current || dragOffsetRef.current)) {
+      const ids = new Set(draggedIds());
+      multiDragRef.current = null;
+      dragOffsetRef.current = null;
+      handleDragRef.current = null;
+      setDragOverDropZone(false);
+      setOverTemplateDrop(false);
+      setSpawnerInteracting(false);
+      // Throw away the in-flight move drafts first: the drag dead-ends here,
+      // so the one undo entry should be "moved into the template", not a
+      // position nudge followed by a move.
+      if (gestureStartRef.current) {
+        sceneRef.current = gestureStartRef.current;
+        gestureStartRef.current = null;
+      }
+      const moved = moveSelectionIntoTemplate(
+        sceneRef.current,
+        0,
+        templateDrop.spawnerId,
+        ids,
+        templateDrop.at,
+      );
+      if (moved) {
+        commitScene(moved.scene);
+        // The dropped bodies are gone from the room, so any selection pointing
+        // at them is stale. Select the spawner instead — its props panel is
+        // what the user wants next, and it keeps the popover open on the
+        // template they just filled.
+        select(templateDrop.spawnerId);
+      } else {
+        bump();
+      }
+      deleteFadeRef.current = { ids: new Set(), target: 0, progress: 0 };
+      selectDownRef.current = null;
+      emptyTapDownRef.current = null;
+      if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+        canvasRef.current.releasePointerCapture(e.pointerId);
+      }
+      return;
     }
 
     // Finalize a marquee gesture: bodies whose AABB intersects the rect join
@@ -1446,10 +1575,11 @@ export default function App() {
     // a body drag, throw away the in-flight move drafts and commit a single
     // remove instead — so undo restores the body exactly where it started.
     const bodyDragId = dragOffsetRef.current && selectedRef.current ? selectedRef.current : null;
-    const deleteByPalette = bodyDragId && isDragOverPalette() && bodyById(bodyDragId);
+    const deleteByPalette = bodyDragId && isDragOverDropZone() && bodyById(bodyDragId);
     dragOffsetRef.current = null;
     handleDragRef.current = null;
-    setDragOverPalette(false);
+    setDragOverDropZone(false);
+    setOverTemplateDrop(false);
     // Unconditional — React no-ops if already false. A conditional read would
     // see the stale closure value when pointerdown + pointerup land in the
     // same React tick (e.g. very fast clicks, or scripted interactions).
@@ -1463,7 +1593,7 @@ export default function App() {
       commitScene(removeBodyAndConnectors(sceneRef.current, 0, bodyDragId!));
       select(null);
       // The body is gone — collapse fade state so the next drag starts clean.
-      deleteFadeRef.current = { id: null, target: 0, progress: 0 };
+      deleteFadeRef.current = { ids: new Set(), target: 0, progress: 0 };
       // Skip the cycle-select / empty-tap branches below — this gesture is done.
       selectDownRef.current = null;
       emptyTapDownRef.current = null;
@@ -1484,6 +1614,10 @@ export default function App() {
     if (empty) {
       const moved = Math.hypot(e.clientX - empty.x, e.clientY - empty.y) > 4;
       if (!moved) {
+        // A deliberate tap on nothing means "I'm done here" — it drops the
+        // selection and closes the template editor, which is the gesture
+        // users reach for to get the popover out of the way.
+        if (popoverSpawnerIdRef.current) closeTemplateEditor();
         if (selectedRef.current) select(null);
         else if (multiSelectionRef.current.size > 0) clearMultiSelection();
       }
@@ -1580,8 +1714,8 @@ export default function App() {
     // removes *that* item, not the spawner that contains it. The closure
     // sees the latest templateSelected because deleteSelected is rebuilt
     // every render and stashed on deleteSelectedRef.
-    if (templateSelected && selectedBody?.type === "spawner") {
-      const sp = selectedBody;
+    if (templateSelected && popoverSpawner) {
+      const sp = popoverSpawner;
       if (sp.template?.bodies.some((b) => b.id === templateSelected)) {
         commitScene(removeBodyFromTemplate(sceneRef.current, 0, sp.id, templateSelected));
         setTemplateSelected(null);
@@ -1842,8 +1976,8 @@ export default function App() {
    */
   const dropBodyAtPointer = (type: BodyType, e: React.PointerEvent) => {
     if (!building) return;
-    const selected = selectedRef.current ? bodyById(selectedRef.current) : null;
-    if (selected?.type === "spawner") {
+    const spawnerId = popoverSpawnerIdRef.current;
+    if (spawnerId) {
       const templatePoint = spawnerPopoverRef.current?.pointToTemplate(e.clientX, e.clientY);
       if (templatePoint) {
         if (type === "spawner") return; // no nested spawners (silently dropped)
@@ -1855,13 +1989,12 @@ export default function App() {
         // can otherwise land partly off-canvas and become hard to find. The
         // bound is generous enough for typical layouts; users who need a
         // wider spread can drag the body around after placement.
-        const TEMPLATE_DROP_CLAMP = 1.2;
         const clamped: Vec2 = {
-          x: Math.max(-TEMPLATE_DROP_CLAMP, Math.min(TEMPLATE_DROP_CLAMP, templatePoint.x)),
-          y: Math.max(-TEMPLATE_DROP_CLAMP, Math.min(TEMPLATE_DROP_CLAMP, templatePoint.y)),
+          x: Math.max(-TEMPLATE_BOUND, Math.min(TEMPLATE_BOUND, templatePoint.x)),
+          y: Math.max(-TEMPLATE_BOUND, Math.min(TEMPLATE_BOUND, templatePoint.y)),
         };
         const newBody = makeBody(type, clamped);
-        const added = addBodyToTemplate(sceneRef.current, 0, selected.id, newBody);
+        const added = addBodyToTemplate(sceneRef.current, 0, spawnerId, newBody);
         if (added) commitScene(added.scene);
         return;
       }
@@ -2298,8 +2431,8 @@ export default function App() {
   // owns the template body). Slider scrubs collapse into one undo step per
   // (template body, prop key) with the same mergeKey scheme as root bodies.
   const onTemplatePropChange = (patch: Props) => {
-    if (!selectedBody || selectedBody.type !== "spawner" || !templateBody) return;
-    const next = updateBodyInTemplate(sceneRef.current, 0, selectedBody.id, templateBody.id, {
+    if (!popoverSpawner || !templateBody) return;
+    const next = updateBodyInTemplate(sceneRef.current, 0, popoverSpawner.id, templateBody.id, {
       props: { ...templateBody.props, ...patch },
     });
     const keys = Object.keys(patch).join(",");
@@ -2308,8 +2441,8 @@ export default function App() {
 
   /** Editing a template connector's props inside a spawner. */
   const onTemplateConnPropChange = (patch: Props) => {
-    if (!selectedBody || selectedBody.type !== "spawner" || !templateConnector) return;
-    const next = updateConnectorInTemplate(sceneRef.current, 0, selectedBody.id, templateConnector.id, {
+    if (!popoverSpawner || !templateConnector) return;
+    const next = updateConnectorInTemplate(sceneRef.current, 0, popoverSpawner.id, templateConnector.id, {
       props: { ...templateConnector.props, ...patch },
     });
     const keys = Object.keys(patch).join(",");
@@ -2570,16 +2703,16 @@ export default function App() {
         />
       )}
 
-      {/* Spawner template popover (issue 19). Opens whenever a spawner is
-          selected in design mode; hides transiently while the glyph is being
-          dragged. Read-only canvas + a tiny tile palette for authoring the
-          template. */}
-      {building && selectedBody?.type === "spawner" && canvasRef.current && (
+      {/* Spawner template popover (issue 19). Opens when a spawner is selected
+          in design mode and stays open across later selections, so a
+          contraption built in the room can be selected and dragged into it;
+          hides transiently while the glyph is being dragged. */}
+      {building && popoverSpawner && canvasRef.current && (
         <SpawnerPopover
           ref={spawnerPopoverRef}
-          template={selectedBody.template ?? { bodies: [], connectors: [] }}
+          template={popoverSpawner.template ?? { bodies: [], connectors: [] }}
           anchor={(() => {
-            const screen = worldToScreen(cameraRef.current, selectedBody.position);
+            const screen = worldToScreen(cameraRef.current, popoverSpawner.position);
             const rect = canvasRef.current.getBoundingClientRect();
             return { x: screen.x + rect.left, y: screen.y + rect.top };
           })()}
@@ -2588,7 +2721,15 @@ export default function App() {
           connectorTool={connectorTool}
           ghost={ghost ? { type: ghost.type, x: ghost.x, y: ghost.y } : null}
           hidden={spawnerInteracting}
-          onSelect={setTemplateSelected}
+          dropTarget={overTemplateDrop}
+          onClose={closeTemplateEditor}
+          onSelect={(bodyId) => {
+            // Picking something inside the template also focuses its spawner in
+            // the room, so the property panel (single-slot) shows the template
+            // item rather than whatever was selected before.
+            if (bodyId && selectedRef.current !== popoverSpawner.id) select(popoverSpawner.id);
+            setTemplateSelected(bodyId);
+          }}
           onBeginGesture={() => {
             // Capture the pre-gesture scene so the whole gesture (move,
             // resize, or rotate inside the popover) lands as a single undo
@@ -2599,7 +2740,7 @@ export default function App() {
             sceneRef.current = updateBodyInTemplate(
               sceneRef.current,
               0,
-              selectedBody.id,
+              popoverSpawner.id,
               bodyId,
               patch,
             );
@@ -2619,7 +2760,7 @@ export default function App() {
             // Removing a template body also clears it from templateSelected
             // so the right-panel falls back to the spawner's own props.
             if (templateSelected === bodyId) setTemplateSelected(null);
-            commitScene(removeBodyFromTemplate(sceneRef.current, 0, selectedBody.id, bodyId));
+            commitScene(removeBodyFromTemplate(sceneRef.current, 0, popoverSpawner.id, bodyId));
           }}
           onAddTemplateConnectors={(conns) => {
             // Apply each connector with addConnectorToTemplate, then commit
@@ -2627,7 +2768,7 @@ export default function App() {
             // main canvas's placeOverlap stacks multiple addConnector calls.
             let scene = sceneRef.current;
             for (const c of conns) {
-              const added = addConnectorToTemplate(scene, 0, selectedBody.id, c);
+              const added = addConnectorToTemplate(scene, 0, popoverSpawner.id, c);
               if (added) scene = added.scene;
             }
             if (scene !== sceneRef.current) {

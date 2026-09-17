@@ -45,9 +45,13 @@ import { DoodleBorder } from "./DoodleBorder";
  *    body itself shrinks + fades on the mini-canvas to telegraph it (same
  *    affordance as drag-back-to-palette on the main canvas).
  *
- * Cross-scope drops from the main palette: App.tsx queries
- * {@link SpawnerPopoverHandle.pointToTemplate} during the palette pointerup
- * to route hits into the template.
+ * Cross-scope drops — a body dragged off the main palette, or a whole
+ * contraption dragged out of the room — are detected by App.tsx, which queries
+ * {@link SpawnerPopoverHandle.pointToTemplate} on the drag's pointerup to
+ * route hits into the template. Because a room selection can't also be the
+ * spawner's, the popover deliberately outlives the spawner's selection: App
+ * keeps it open until the user closes it (the × here, Esc, or a tap on empty
+ * canvas).
  */
 const POPOVER_W = 220;
 const POPOVER_H = 220;
@@ -98,6 +102,15 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   ghost: { type: BodyType; x: number; y: number } | null;
   /** True while the spawner is being dragged/rotated; popover hides briefly. */
   hidden?: boolean;
+  /** True while a room-scope body drag hovers this mini-canvas — the release
+   *  will move that selection into the template. Lights the canvas up as a
+   *  drop zone (the dragged bodies are simultaneously shrinking + fading on
+   *  the main canvas). */
+  dropTarget?: boolean;
+  /** Close the popover. The editor is sticky (it outlives the spawner's own
+   *  selection so contraptions can be dragged in), so it needs an explicit
+   *  way out besides Esc / tapping empty canvas. */
+  onClose: () => void;
   onSelect: (bodyId: string | null) => void;
   /** Called once on pointerdown when an in-popover gesture is about to start. */
   onBeginGesture: () => void;
@@ -123,6 +136,8 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
     connectorTool,
     ghost,
     hidden,
+    dropTarget,
+    onClose,
     onSelect,
     onBeginGesture,
     onUpdateBody,
@@ -235,7 +250,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       }
     }
     const f = fadeRef.current;
-    const deleteFade = f.id && f.progress > 0 ? { id: f.id, progress: f.progress } : null;
+    const deleteFade = f.id && f.progress > 0 ? { ids: new Set([f.id]), progress: f.progress } : null;
     r.draw(
       synthScene(template),
       designTransforms(template.bodies),
@@ -534,7 +549,7 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
   // the next show doesn't need to rebuild the renderer or re-fit the camera.
   return (
     <div
-      className="spawner-popover"
+      className={`spawner-popover${dropTarget ? " drop-target" : ""}`}
       style={{
         left: pos.left,
         top: pos.top,
@@ -548,6 +563,14 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
       <DoodleBorder strokeWidth={2.5} />
       <div className="spawner-popover-head">
         <span className="spawner-popover-title">Template</span>
+        <button
+          className="spawner-popover-close"
+          onClick={onClose}
+          aria-label="Close template editor"
+          title="Close template editor"
+        >
+          &times;
+        </button>
       </div>
       <div className="spawner-popover-canvas-wrap">
         <canvas
@@ -559,9 +582,11 @@ export const SpawnerPopover = forwardRef<SpawnerPopoverHandle, {
           onPointerCancel={onCanvasPointerUp}
         />
       </div>
-      {template.bodies.length === 0 ? (
+      {dropTarget ? (
+        <div className="spawner-popover-empty">Drop to add to the template</div>
+      ) : template.bodies.length === 0 ? (
         <div className="spawner-popover-empty">
-          Drag a shape from the palette onto this canvas to add to the template.
+          Drag a shape from the palette — or a contraption from the room — onto this canvas.
         </div>
       ) : (
         // Non-spring connector tools require two overlapping bodies in a
